@@ -1,0 +1,11 @@
+rgcn_hidden_feats: [64, 64, 64, 64]
+ffn_hidden_feats: 128
+rgcn_drop_out: 0.05
+ffn_drop_out: 0.3
+lr: 0.001
+mode: higher
+metric_name: r2
+classification: false
+batch_size: 2048
+patience: 500
+num_epochs: 500
