@@ -1,5 +1,7 @@
 # PepExplainer
 
+❗️❗️❗️[The code will be updated in the next two days.]
+
 This is the official implementation for the paper titled 'PepExplainer: an explainable deep learning model for selection-based macrocyclic peptide bioactivity prediction and optimization'.
 
 ![flowchart](flowchart.png)
