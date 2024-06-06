@@ -25,8 +25,6 @@ pip install -e .
 
 **Tips**: The Python environment settings were updated and validated on Python 3.9 with Nvidia 3090, CUDA 11.8, and PyTorch 2.1.2. If you encounter any issues with the settings, please submit a pull request.
 
-当然，这里是改进后的文本：
-
 ## Experiments
 
 ### 1. Training and Evaluation for Enrichment Prediction
