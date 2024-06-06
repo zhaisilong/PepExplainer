@@ -160,4 +160,4 @@ cython_debug/
 #.idea/
 
 # User added
-data/
+data/**/*.bin

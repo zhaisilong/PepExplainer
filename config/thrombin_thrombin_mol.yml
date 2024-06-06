@@ -1,0 +1,30 @@
+task: thrombin
+sub_type: mol
+
+# Data
+data_name: thrombin
+label_name: target
+peptide_name: peptide
+methods: thrombin
+max_workers: 16
+origin_data_dir: ./data/origin_data
+graph_data_dir: ./data/graph_data
+prediction_dir: ./prediction
+
+# Trainer
+in_feats: 40
+max_evals: 30
+loop: true
+device: cuda
+
+# Model
+rgcn_hidden_feats: [64, 64, 64, 64]
+ffn_hidden_feats: 128
+rgcn_drop_out: 0.1
+ffn_drop_out: 0.1
+lr: 0.0005
+mode: higher
+metric_name: r2
+classification: false
+batch_size: 4096
+patience: 40

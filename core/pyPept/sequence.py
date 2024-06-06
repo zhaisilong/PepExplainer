@@ -38,21 +38,24 @@ from rdkit.Chem import PandasTools
 # Functions and classes
 ##########################################################################
 
+
 class SequenceConstants:
     """
     A class to hold defaults values related to pyPept.Sequence objects.
     """
+
     def_path = "data"
     def_lib_filename = "monomers.sdf"
     monomer_join = "-"
     chain_separator = "."
     csv_separator = ","
-    helm_polymer = '|'
+    helm_polymer = "|"
     max_rgroups = 4
 
 
 # End of Sequence class-related constants definition.
 ############################################################
+
 
 class Sequence:
     """
@@ -61,8 +64,12 @@ class Sequence:
     """
 
     ############################################################
-    def __init__(self, input_biln, path=SequenceConstants.def_path,
-                 monomer_lib=SequenceConstants.def_lib_filename):
+    def __init__(
+        self,
+        input_biln,
+        path=SequenceConstants.def_path,
+        monomer_lib=SequenceConstants.def_lib_filename,
+    ):
         """
         Instantiate a pyPept.Sequence object with the input BILN sequence.
 
@@ -84,35 +91,38 @@ class Sequence:
         self.s_nmonomers = 0
         self.__is_valid = True
 
-        seq = split_outside(self.s_inputbiln,
-                            by_element=SequenceConstants.monomer_join,
-                            outside='[]')
+        seq = split_outside(
+            self.s_inputbiln, by_element=SequenceConstants.monomer_join, outside="[]"
+        )
         seq = SequenceConstants.monomer_join.join(list(filter(len, seq)))
         # Remove dangling '-' around chain breaks
-        self.s_biln = re.sub(r'[-]*\.[-]*',
-                             SequenceConstants.chain_separator, seq)
+        self.s_biln = re.sub(r"[-]*\.[-]*", SequenceConstants.chain_separator, seq)
 
         # Read the monomer dictionary
-        if path != SequenceConstants.def_path or \
-                monomer_lib != SequenceConstants.def_lib_filename:
+        if (
+            path != SequenceConstants.def_path
+            or monomer_lib != SequenceConstants.def_lib_filename
+        ):
             self.monomer_df = get_monomer_info(os.path.join(path, monomer_lib))
         else:
             try:
                 stream = pkg_resources.resource_stream(
-                    __name__, os.path.join(path, monomer_lib))
+                    __name__, os.path.join(path, monomer_lib)
+                )
                 self.monomer_df = get_monomer_info(stream)
                 stream.close()
             except FileNotFoundError:
-                self.monomer_df = get_monomer_info(os.path.join(
-                    SequenceConstants.def_path,
-                    SequenceConstants.def_lib_filename))
+                self.monomer_df = get_monomer_info(
+                    os.path.join(
+                        SequenceConstants.def_path, SequenceConstants.def_lib_filename
+                    )
+                )
 
         try:
             # Parse the BILN sequence
             self.__parse_biln()
         except IOError:
-            warnings.warn(
-                f"Unspecified error in parsing BILN {self.s_inputbiln}")
+            warnings.warn(f"Unspecified error in parsing BILN {self.s_inputbiln}")
             raise IOError
             # sys.exit(1)
 
@@ -120,8 +130,7 @@ class Sequence:
             # Parse the peptide bonds based on the BILN representation
             self.__parse_biln_bonds()
         except IOError:
-            warnings.warn(
-                f'Exception in parsing BILN bonds. (BILN: {self.s_biln})')
+            warnings.warn(f"Exception in parsing BILN bonds. (BILN: {self.s_biln})")
             # sys.exit(2)
             raise IOError
 
@@ -136,9 +145,9 @@ class Sequence:
         """
 
         biln = self.s_biln
-        chains = split_outside(biln,
-                               by_element=SequenceConstants.chain_separator,
-                               outside='[]')
+        chains = split_outside(
+            biln, by_element=SequenceConstants.chain_separator, outside="[]"
+        )
 
         self.s_chains = {}
         self.s_chains["s_nChains"] = len(chains)
@@ -148,47 +157,49 @@ class Sequence:
         m_idx = 0
         # Iterate over the chains
         for num_chain, chain in enumerate(chains):
-            residues = split_outside(chain,
-                                     by_element=SequenceConstants.monomer_join,
-                                     outside='[]')
+            residues = split_outside(
+                chain, by_element=SequenceConstants.monomer_join, outside="[]"
+            )
             monomer_types = set()
             monomer_ids = []
             for res in residues:
                 # Extract the residue information
-                resname = re.sub(r'\(\d+,\d+\)', '', res)
-                resname = re.sub(r'^\[(.*)\]$', '\\1', resname)
+                resname = re.sub(r"\(\d+,\d+\)", "", res)
+                resname = re.sub(r"^\[(.*)\]$", "\\1", resname)
 
                 # Check if name exists in MonomerDic
                 if resname not in self.monomer_df.index:
+                    warnings.warn(f"Monomer {resname} in BILN not found in MonomerDic")
                     warnings.warn(
-                        f"Monomer {resname} in BILN not found in MonomerDic")
-                    warnings.warn(
-                        "Need to check BILN or update MonomerDic before proceeding.")
+                        "Need to check BILN or update MonomerDic before proceeding."
+                    )
                     raise FileExistsError
                     # sys.exit(3)
 
                 # Add additional information of the monomers
                 mm_info = self.monomer_df.loc[resname, :].to_dict()
-                mm_value = {'m_name': resname,
-                            'm_name_in_biln': res,
-                            'm_chainID': num_chain}
+                mm_value = {
+                    "m_name": resname,
+                    "m_name_in_biln": res,
+                    "m_chainID": num_chain,
+                }
                 mm_value.update(mm_info)
 
                 # Append the monomer in the sequence object
                 self.__append_monomer(mm_value)
 
                 monomer_ids.append(m_idx)
-                monomer_types.add(mm_info['m_type'])
+                monomer_types.add(mm_info["m_type"])
                 m_idx += 1
 
             # Save the type of monomer
             if len(monomer_types) == 1:
-                if monomer_types == {'aa'}:
-                    self.s_chains["s_cType"][num_chain] = 'peptide'
+                if monomer_types == {"aa"}:
+                    self.s_chains["s_cType"][num_chain] = "peptide"
                 else:
-                    self.s_chains["s_cType"][num_chain] = 'chem'
+                    self.s_chains["s_cType"][num_chain] = "chem"
             else:
-                self.s_chains["s_cType"][num_chain] = 'mixed'
+                self.s_chains["s_cType"][num_chain] = "mixed"
 
             self.s_chains["s_monomerIDs"][num_chain] = monomer_ids
 
@@ -208,16 +219,25 @@ class Sequence:
         self.s_mid += 1
 
         # Fields required for the addition of the monomer
-        keys_needed = ['m_name', 'm_abbr', 'm_name_in_biln', 'm_type',
-                       'm_subtype', 'm_chainID', 'm_Rgroups',
-                       'm_RgroupIdx', 'm_attachmentPointIdx', 'm_romol']
+        keys_needed = [
+            "m_name",
+            "m_abbr",
+            "m_name_in_biln",
+            "m_type",
+            "m_subtype",
+            "m_chainID",
+            "m_Rgroups",
+            "m_RgroupIdx",
+            "m_attachmentPointIdx",
+            "m_romol",
+        ]
 
         # check if all necessary keys are available in the monomer definition
         for key in keys_needed:
             try:
                 monomer[key]
             except KeyError:
-                warnings.warn(f'Key {key} missing in monomer description')
+                warnings.warn(f"Key {key} missing in monomer description")
                 sys.exit(1)
 
         # Construct the monomer dictionary
@@ -238,21 +258,23 @@ class Sequence:
         bond_info = []
         bond_info_helm = []
 
-        residues = split_outside(self.s_biln,
-                                 SequenceConstants.chain_separator +
-                                 SequenceConstants.monomer_join, '[]')
+        residues = split_outside(
+            self.s_biln,
+            SequenceConstants.chain_separator + SequenceConstants.monomer_join,
+            "[]",
+        )
         nres = len(residues)
         # Iterate over residues
         for num_res, res in enumerate(residues):
-
             if num_res < nres - 1:
-                if self.__get_monomer_prop('m_chainID', num_res) == \
-                        self.__get_monomer_prop('m_chainID', num_res + 1):
+                if self.__get_monomer_prop(
+                    "m_chainID", num_res
+                ) == self.__get_monomer_prop("m_chainID", num_res + 1):
                     # We have a bond between the two monomers
-                    r1_value = self.__get_monomer_prop(
-                        'm_attachmentPointIdx', num_res)
+                    r1_value = self.__get_monomer_prop("m_attachmentPointIdx", num_res)
                     r2_value = self.__get_monomer_prop(
-                        'm_attachmentPointIdx', num_res + 1)
+                        "m_attachmentPointIdx", num_res + 1
+                    )
 
                     bond = (num_res, r1_value[1], num_res + 1, r2_value[0])
                     self.__add_bond(*bond)
@@ -261,27 +283,30 @@ class Sequence:
             match = re.findall(r"\((\d+),(\d+)\)", res)
             for i, m_value in enumerate(match):
                 b_idx, rgrp_idx = int(m_value[0]), int(m_value[1])
-                attchment_idx = self.__get_monomer_prop('m_attachmentPointIdx',
-                                                        num_res)
+                attchment_idx = self.__get_monomer_prop("m_attachmentPointIdx", num_res)
 
-                bond_info.append([b_idx, num_res, rgrp_idx,
-                                  int(attchment_idx[rgrp_idx - 1])])
+                bond_info.append(
+                    [b_idx, num_res, rgrp_idx, int(attchment_idx[rgrp_idx - 1])]
+                )
                 bond_info_helm.append([b_idx, num_res, rgrp_idx])
 
             # For multiple branching
             match = re.findall(r"\((\d+),(\d+);(\d+),(\d+)\)", res)
             for i, m_value in enumerate(match):
-                b1_idx, rgrp1_idx, b2_idx, rgrp2_idx = int(m_value[0]), int(
-                    m_value[1]), \
-                                                       int(m_value[2]), int(
-                    m_value[3])
-                attchment_idx = self.__get_monomer_prop('m_attachmentPointIdx',
-                                                        num_res)
+                b1_idx, rgrp1_idx, b2_idx, rgrp2_idx = (
+                    int(m_value[0]),
+                    int(m_value[1]),
+                    int(m_value[2]),
+                    int(m_value[3]),
+                )
+                attchment_idx = self.__get_monomer_prop("m_attachmentPointIdx", num_res)
 
-                bond_info.append([b1_idx, num_res, rgrp1_idx,
-                                  int(attchment_idx[rgrp1_idx - 1])])
-                bond_info.append([b2_idx, num_res, rgrp2_idx,
-                                  int(attchment_idx[rgrp2_idx - 1])])
+                bond_info.append(
+                    [b1_idx, num_res, rgrp1_idx, int(attchment_idx[rgrp1_idx - 1])]
+                )
+                bond_info.append(
+                    [b2_idx, num_res, rgrp2_idx, int(attchment_idx[rgrp2_idx - 1])]
+                )
                 bond_info_helm.append([b1_idx, num_res, rgrp1_idx])
                 bond_info_helm.append([b2_idx, num_res, rgrp2_idx])
 
@@ -309,7 +334,6 @@ class Sequence:
 
             # Collect the data needed to add to bond information in Sequence
             for bond_val, bondx in enumerate(bond):
-
                 if bondx[0][1] > bondx[1][1]:
                     bondx[0], bondx[1] = bondx[1], bondx[0]
 
@@ -330,8 +354,8 @@ class Sequence:
         all_rgroups = []
         all_attch_idx = []
         for mon in self.s_monomers:
-            m_rgroups = copy.copy(mon['m_Rgroups'])
-            m_attch_idx = mon['m_attachmentPointIdx']
+            m_rgroups = copy.copy(mon["m_Rgroups"])
+            m_attch_idx = mon["m_attachmentPointIdx"]
             all_rgroups.append(m_rgroups)
             all_attch_idx.append(m_attch_idx)
 
@@ -348,12 +372,11 @@ class Sequence:
 
         # Now update the m_Rgroups and romol in the sequence object
         for i, mon in enumerate(self.s_monomers):
-            mon['m_Rgroups'] = all_rgroups[i]
-            m_rgroup_idx = mon['m_RgroupIdx']
-            m_romol = mon['m_romol']
-            m_romol = self.__remove_rgroups(all_rgroups[i], m_rgroup_idx,
-                                            m_romol)
-            mon['m_romol'] = m_romol
+            mon["m_Rgroups"] = all_rgroups[i]
+            m_rgroup_idx = mon["m_RgroupIdx"]
+            m_romol = mon["m_romol"]
+            m_romol = self.__remove_rgroups(all_rgroups[i], m_rgroup_idx, m_romol)
+            mon["m_romol"] = m_romol
 
     ########################################################################################
     def __add_bond(self, m_id1, atom1, m_id2, atom2):
@@ -385,7 +408,7 @@ class Sequence:
         try:
             mon = self.s_monomers[idx]
         except IndexError:
-            warnings.warn(f'Cannot access monomer index {idx} in sequence')
+            warnings.warn(f"Cannot access monomer index {idx} in sequence")
 
         return mon
 
@@ -410,8 +433,7 @@ class Sequence:
         try:
             m_prop = m_dict[property_val]
         except ValueError:
-            warnings.warn(
-                f'Cannot access property {property_val} in monomer {idx}')
+            warnings.warn(f"Cannot access property {property_val} in monomer {idx}")
 
         return m_prop
 
@@ -464,19 +486,21 @@ class Sequence:
                 at_idx = rgroup_idx[i]
                 at_type = rgroups[i]
 
-                if at_type == 'H':
+                if at_type == "H":
                     # Simply remove this R-Group
                     idx.append(at_idx)
 
-                elif at_type == 'OH':
+                elif at_type == "OH":
                     # generate an oxygen atom
-                    oh_group = Chem.MolFromSmiles('O')
+                    oh_group = Chem.MolFromSmiles("O")
                     at_o = oh_group.GetAtomWithIdx(0)
                     # replace Rgroup by O
                     emol.ReplaceAtom(at_idx, at_o)
                 else:
-                    warnings.warn(f'R-group {at_type} not known ' + \
-                                  '- need to update code in Sequence.__removeRgroups.')
+                    warnings.warn(
+                        f"R-group {at_type} not known "
+                        + "- need to update code in Sequence.__removeRgroups."
+                    )
                     raise ValueError
 
         # Remove the atoms to be removed - reverse list order
@@ -519,6 +543,7 @@ class Sequence:
 # Additional functions
 ##########################################################################
 
+
 def get_monomer_info(path):
     """
     Convert a monomer SDF file to a Pandas dataframe object.
@@ -531,17 +556,16 @@ def get_monomer_info(path):
     sdf_file = path
     df_group = PandasTools.LoadSDF(sdf_file)
 
-    groups = ['m_Rgroups', 'm_RgroupIdx', 'm_attachmentPointIdx']
+    groups = ["m_Rgroups", "m_RgroupIdx", "m_attachmentPointIdx"]
     for idx in df_group.index:
         for group in groups:
             change = df_group[group][idx].split(SequenceConstants.csv_separator)
-            if group == 'm_Rgroups':
-                updated_change = [None if v == 'None' else v for v in change]
+            if group == "m_Rgroups":
+                updated_change = [None if v == "None" else v for v in change]
             else:
-                updated_change = [None if v == 'None' else int(v) for v in
-                                  change]
+                updated_change = [None if v == "None" else int(v) for v in change]
             df_group[group][idx] = updated_change
-    df_group = df_group.set_index('symbol')
+    df_group = df_group.set_index("symbol")
     df_group = df_group.rename(columns={"ROMol": "m_romol"})
 
     return df_group
@@ -559,27 +583,34 @@ def greekify(mol, name_aa):
     """
 
     # Some local fixes to name correctly the natural amino acids if required
-    fix_aa = {'W': {'CE1': 'CE2', 'NE2': 'NE1', 'CZ1': 'CZ3', 'CH': 'CH2',
-                    'CD1': 'CD2', 'CD2': 'CD1'},
-              'N': {'OD2': 'OD1', 'ND1': 'ND2'},
-              'I': {'CD': 'CD1', 'CG1': 'CG2', 'CG2': 'CG1'},
-              'T': {'OG2': 'OG1', 'CG1': 'CG2'},
-              'P': {'CG2': 'CG', 'CG1': 'CD'}}
+    fix_aa = {
+        "W": {
+            "CE1": "CE2",
+            "NE2": "NE1",
+            "CZ1": "CZ3",
+            "CH": "CH2",
+            "CD1": "CD2",
+            "CD2": "CD1",
+        },
+        "N": {"OD2": "OD1", "ND1": "ND2"},
+        "I": {"CD": "CD1", "CG1": "CG2", "CG2": "CG1"},
+        "T": {"OG2": "OG1", "CG1": "CG2"},
+        "P": {"CG2": "CG", "CG1": "CD"},
+    }
 
-    greek = list('ABGDEZHTIKLMNXOPRS')
+    greek = list("ABGDEZHTIKLMNXOPRS")
     greekdex = defaultdict(list)
-    ca_atom = get_atom_by_name(mol, 'CA')
+    ca_atom = get_atom_by_name(mol, "CA")
 
     # Recognize if the atom is not part of the backbone
     for atom in mol.GetAtoms():
-        is_backbone = (atom.GetPDBResidueInfo() is not None and
-                       atom.GetPDBResidueInfo().GetName().strip() in (
-                           'LOWER', 'UPPER', 'N', 'CA', 'C', 'H', 'HA', 'O',
-                           'OXT'))
-        if atom.GetSymbol() != 'H' and atom.GetSymbol()[
-            0] != 'R' and not is_backbone:
-            n_atom = len(
-                Chem.GetShortestPath(mol, ca_atom.GetIdx(), atom.GetIdx())) - 1
+        is_backbone = (
+            atom.GetPDBResidueInfo() is not None
+            and atom.GetPDBResidueInfo().GetName().strip()
+            in ("LOWER", "UPPER", "N", "CA", "C", "H", "HA", "O", "OXT")
+        )
+        if atom.GetSymbol() != "H" and atom.GetSymbol()[0] != "R" and not is_backbone:
+            n_atom = len(Chem.GetShortestPath(mol, ca_atom.GetIdx(), atom.GetIdx())) - 1
             greekdex[n_atom].append(atom)
 
     # Iterate over the list of atoms and the greek letters
@@ -590,35 +621,34 @@ def greekify(mol, name_aa):
             pass
         elif len(greekdex[k]) == 1:
             # Special case
-            new_name = f'{greekdex[k][0].GetSymbol()}{greek[k]}'
+            new_name = f"{greekdex[k][0].GetSymbol()}{greek[k]}"
             if name_aa in fix_aa:
                 if new_name in fix_aa[name_aa]:
                     digit = fix_aa[name_aa][new_name][-1]
-                    name = f'{greekdex[k][0].GetSymbol(): >2}{greek[k]}{digit}'
+                    name = f"{greekdex[k][0].GetSymbol(): >2}{greek[k]}{digit}"
                 else:
-                    name = f'{greekdex[k][0].GetSymbol(): >2}{greek[k]} '
+                    name = f"{greekdex[k][0].GetSymbol(): >2}{greek[k]} "
             else:
-                name = f'{greekdex[k][0].GetSymbol(): >2}{greek[k]} '
+                name = f"{greekdex[k][0].GetSymbol(): >2}{greek[k]} "
 
             greekdex[k][0].GetPDBResidueInfo().SetName(name)
 
         elif len(greekdex[k]) < 36:
             list_atom = list(string.digits + string.ascii_uppercase)[1:]
             for i, atom in enumerate(greekdex[k]):
-
-                new_name = f'{atom.GetSymbol()}{greek[k]}{list_atom[i]}'
+                new_name = f"{atom.GetSymbol()}{greek[k]}{list_atom[i]}"
                 if name_aa in fix_aa:
                     if new_name in fix_aa[name_aa]:
-                        if name_aa != 'P':
+                        if name_aa != "P":
                             digit = fix_aa[name_aa][new_name][-1]
-                            name = f'{atom.GetSymbol(): >2}{greek[k]}{digit}'
+                            name = f"{atom.GetSymbol(): >2}{greek[k]}{digit}"
                         else:
                             digit = fix_aa[name_aa][new_name][-1]
-                            name = f'{atom.GetSymbol(): >2}{digit} '
+                            name = f"{atom.GetSymbol(): >2}{digit} "
                     else:
-                        name = f'{atom.GetSymbol(): >2}{greek[k]}{list_atom[i]}'
+                        name = f"{atom.GetSymbol(): >2}{greek[k]}{list_atom[i]}"
                 else:
-                    name = f'{atom.GetSymbol(): >2}{greek[k]}{list_atom[i]}'
+                    name = f"{atom.GetSymbol(): >2}{greek[k]}{list_atom[i]}"
 
                 greekdex[k][i].GetPDBResidueInfo().SetName(name)
 
@@ -627,6 +657,7 @@ def greekify(mol, name_aa):
 
 
 ############################################################
+
 
 def split_outside(string, by_element, outside, keep_marker=True):
     """
@@ -649,7 +680,7 @@ def split_outside(string, by_element, outside, keep_marker=True):
     # Special character
     grpsep = chr(29)
 
-    out = ''
+    out = ""
     inside = False
     for i in string:
         if i == outside[0]:
@@ -657,20 +688,20 @@ def split_outside(string, by_element, outside, keep_marker=True):
                 if keep_marker:
                     j = i
                 else:
-                    j = ''
+                    j = ""
                 inside = False
             else:
                 inside = True
                 if keep_marker:
                     j = i
                 else:
-                    j = ''
+                    j = ""
         elif i == outside[1]:
             inside = False
             if keep_marker:
                 j = i
             else:
-                j = ''
+                j = ""
         else:
             if not inside and i in by_element:
                 j = grpsep
@@ -684,6 +715,7 @@ def split_outside(string, by_element, outside, keep_marker=True):
 
 
 ############################################################
+
 
 def get_atom_by_name(mol, name):
     """
@@ -707,6 +739,7 @@ def get_atom_by_name(mol, name):
 
 ########################################################################################
 
+
 def get_monomer_codes(df_name):
     """
     Get the PDB codes from the monomer dictionary
@@ -718,8 +751,8 @@ def get_monomer_codes(df_name):
     # Get the values from the monomer dictionary
     monomers = {}
     for idx in df_name.index:
-        symbol = df_name.at[idx, 'm_abbr']
-        pdb_name = df_name.at[idx, 'pdbName']
+        symbol = df_name.at[idx, "m_abbr"]
+        pdb_name = df_name.at[idx, "pdbName"]
         monomers[symbol] = pdb_name
 
     return monomers
@@ -727,8 +760,10 @@ def get_monomer_codes(df_name):
 
 ############################################################
 
-def correct_pdb_atoms(seq, path=SequenceConstants.def_path,
-                      monomer_lib=SequenceConstants.def_lib_filename):
+
+def correct_pdb_atoms(
+    seq, path=SequenceConstants.def_path, monomer_lib=SequenceConstants.def_lib_filename
+):
     """
     Pipeline to assign the correct atom names to the pyPept object
 
@@ -738,20 +773,27 @@ def correct_pdb_atoms(seq, path=SequenceConstants.def_path,
     """
 
     # Special case two main N- and C- terminal caps
-    names_cap = {'ac': ['CH3', 'C', 'O'], 'am': ['N']}
+    names_cap = {"ac": ["CH3", "C", "O"], "am": ["N"]}
 
     # Read the monomer dataframe
-    if path != SequenceConstants.def_path or monomer_lib != SequenceConstants.def_lib_filename:
+    if (
+        path != SequenceConstants.def_path
+        or monomer_lib != SequenceConstants.def_lib_filename
+    ):
         new_df = get_monomer_info(os.path.join(path, monomer_lib))
     else:
         try:
-            stream = pkg_resources.resource_stream(__name__, os.path.join(path,
-                                                                          monomer_lib))
+            stream = pkg_resources.resource_stream(
+                __name__, os.path.join(path, monomer_lib)
+            )
             new_df = get_monomer_info(stream)
             stream.close()
         except FileNotFoundError:
-            new_df = get_monomer_info(os.path.join(SequenceConstants.def_path,
-                                                   SequenceConstants.def_lib_filename))
+            new_df = get_monomer_info(
+                os.path.join(
+                    SequenceConstants.def_path, SequenceConstants.def_lib_filename
+                )
+            )
 
     # Get monomer codes
     monomers = get_monomer_codes(new_df)
@@ -759,17 +801,17 @@ def correct_pdb_atoms(seq, path=SequenceConstants.def_path,
     # Iterate over the monomers
     mm_list = seq.s_monomers
     for i, monomer in enumerate(mm_list):
-        mol = monomer['m_romol']
-        name = monomer['m_abbr']
-        backbone_smiles = Chem.MolFromSmiles('NCC(=O)')
+        mol = monomer["m_romol"]
+        name = monomer["m_abbr"]
+        backbone_smiles = Chem.MolFromSmiles("NCC(=O)")
         if i == len(mm_list) - 1:
-            backbone_smiles = Chem.MolFromSmiles('NCC(=O)O')
+            backbone_smiles = Chem.MolFromSmiles("NCC(=O)O")
         backbone_atoms = mol.GetSubstructMatches(backbone_smiles)
         aa_flag = 0
         if backbone_atoms:
             bb_index = list(backbone_atoms[0])
-            type_mon = new_df.loc[new_df['m_abbr'] == name, 'm_type'].item()
-            if type_mon == 'aa':
+            type_mon = new_df.loc[new_df["m_abbr"] == name, "m_type"].item()
+            if type_mon == "aa":
                 aa_flag = 1
 
         # Iterate over the atoms
@@ -781,41 +823,45 @@ def correct_pdb_atoms(seq, path=SequenceConstants.def_path,
                 if atom.GetIdx() in bb_index:
                     pos = bb_index.index(atom.GetIdx())
                 if pos == 0:
-                    atomname = ' N  '
+                    atomname = " N  "
                 elif pos == 1:
-                    atomname = ' CA '
+                    atomname = " CA "
                 elif pos == 2:
-                    atomname = ' C  '
+                    atomname = " C  "
                 elif pos == 3:
-                    atomname = ' O  '
+                    atomname = " O  "
                 elif pos == 4:
-                    atomname = ' OXT'
+                    atomname = " OXT"
                 else:
                     counter += 1
-                    atomname = f' {atom.GetSymbol()}{counter} '
+                    atomname = f" {atom.GetSymbol()}{counter} "
             else:
                 # Special case for main capping groups
-                if name in ('ac', 'am'):
-                    if atom.GetSymbol()[0] != 'R':
-                        if names_cap[name][j] == 'CH3':
-                            atomname = f' {names_cap[name][j]}'
+                if name in ("ac", "am"):
+                    if atom.GetSymbol()[0] != "R":
+                        if names_cap[name][j] == "CH3":
+                            atomname = f" {names_cap[name][j]}"
                         else:
-                            atomname = f' {names_cap[name][j]}  '
+                            atomname = f" {names_cap[name][j]}  "
                 else:
                     counter_non += 1
                     if counter_non < 10:
-                        atomname = f' {atom.GetSymbol()}{counter_non} '
+                        atomname = f" {atom.GetSymbol()}{counter_non} "
                     else:
-                        atomname = f' {atom.GetSymbol()}{counter_non}'
+                        atomname = f" {atom.GetSymbol()}{counter_non}"
 
             # Assign the atom object to the peptide molecule
             info = atom.GetPDBResidueInfo()
             if info is None:
-                atom.SetMonomerInfo(Chem.AtomPDBResidueInfo(atomName=atomname,
-                                                            serialNumber=atom.GetIdx(),
-                                                            residueName=f'{monomers[name]}',
-                                                            residueNumber=i + 1,
-                                                            chainId="A"))
+                atom.SetMonomerInfo(
+                    Chem.AtomPDBResidueInfo(
+                        atomName=atomname,
+                        serialNumber=atom.GetIdx(),
+                        residueName=f"{monomers[name]}",
+                        residueNumber=i + 1,
+                        chainId="A",
+                    )
+                )
 
         # Rename atoms using the greek nomenclature
         if aa_flag == 1:
@@ -824,6 +870,7 @@ def correct_pdb_atoms(seq, path=SequenceConstants.def_path,
     return seq
 
     # end of definition of correct_pdb_atoms()
+
 
 ############################################################
 # End of sequence.py

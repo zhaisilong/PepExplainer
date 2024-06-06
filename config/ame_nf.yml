@@ -1,0 +1,30 @@
+task: nf
+sub_type: aa
+
+# Data
+data_name: nf
+label_name: target
+peptide_name: peptide
+methods: linear
+max_workers: 16
+origin_data_dir: ../data/origin_data
+graph_data_dir: ../data/graph_data
+prediction_dir: ../prediction
+
+# Trainer
+in_feats: 40
+max_evals: 30
+loop: true
+device: cuda
+
+# Model
+rgcn_hidden_feats: [128, 128, 128, 128]
+ffn_hidden_feats: 128
+rgcn_drop_out: 0.1
+ffn_drop_out: 0.1
+lr: 0.001
+mode: higher
+metric_name: accuracy
+classification: true
+batch_size: 1024
+patience: 40

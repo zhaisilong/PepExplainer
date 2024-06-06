@@ -353,14 +353,21 @@ def return_atom_and_sub_attribution_emerge(
         emerge_ring_list,
     )
 
-def get_summary(task_name: str, sub_type: str, num_seeds: int = 10, summary_dir: Path = None, prediction_dir: Path = None):
+
+def get_summary(
+    task_name: str,
+    sub_type: str,
+    num_seeds: int = 10,
+    summary_dir: Path = None,
+    prediction_dir: Path = None,
+):
     if summary_dir is None:
-        summary_dir = Path('.')
+        summary_dir = Path(".")
     elif isinstance(summary_dir, str):
         summary_dir = Path(summary_dir)
 
     if prediction_dir is None:
-        prediction_dir = Path('.')
+        prediction_dir = Path(".")
     elif isinstance(prediction_dir, str):
         prediction_dir
 
@@ -388,25 +395,27 @@ def get_summary(task_name: str, sub_type: str, num_seeds: int = 10, summary_dir:
         )
         result = pd.concat([result_train, result_valid, result_test], axis=0)
 
-        result['group'] = group_list
+        result["group"] = group_list
 
-        if sub_type == 'mol':
-            result.sort_values(by='sequence', inplace=True)
-        
+        if sub_type == "mol":
+            result.sort_values(by="sequence", inplace=True)
+
         # 合并五个随机种子结果，并统计方差和均值
         if seed == 0:
-            result_summary['sequence'] = result['sequence']
-            result_summary['smiles'] = result['smiles']
-            result_summary['label'] = result['label']
-            result_summary['sub_name'] = result['sub_name']
-            result_summary['group'] = result['group']
-            result_summary['pred_{}'.format(seed)] = result['pred'].tolist()
+            result_summary["sequence"] = result["sequence"]
+            result_summary["smiles"] = result["smiles"]
+            result_summary["label"] = result["label"]
+            result_summary["sub_name"] = result["sub_name"]
+            result_summary["group"] = result["group"]
+            result_summary["pred_{}".format(seed)] = result["pred"].tolist()
         if seed > 0:
-            result_summary['pred_{}'.format(seed)] = result['pred'].tolist()
+            result_summary["pred_{}".format(seed)] = result["pred"].tolist()
 
-    pred_columnms = ['pred_{}'.format(i) for i in range(10)]
+    pred_columnms = ["pred_{}".format(i) for i in range(10)]
     data_pred = result_summary[pred_columnms]
-    result_summary['pred_mean'] = data_pred.mean(axis=1)
-    result_summary['pred_std'] = data_pred.std(axis=1)
+    result_summary["pred_mean"] = data_pred.mean(axis=1)
+    result_summary["pred_std"] = data_pred.std(axis=1)
 
-    result_summary.to_csv(summary_dir / f"{task_name}_{sub_type}_prediction_summary.csv", index=False)
+    result_summary.to_csv(
+        summary_dir / f"{task_name}_{sub_type}_prediction_summary.csv", index=False
+    )

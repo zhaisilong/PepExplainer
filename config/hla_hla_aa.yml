@@ -1,0 +1,31 @@
+task: hla
+sub_type: aa
+
+# Data
+data_name: hla
+label_name: target
+peptide_name: peptide
+methods: linear
+max_workers: 16
+
+# Trainer
+in_feats: 40
+max_evals: 30
+loop: true
+device: cuda
+num_epochs: 500
+report_epochs: 5
+patience: 40
+batch_size: 2048
+
+# Model
+rgcn_hidden_feats: [64, 64, 64, 64]
+ffn_hidden_feats: 128
+rgcn_drop_out: 0.1
+ffn_drop_out: 0.1
+lr: 0.001
+mode: higher
+metric_name: accuracy
+classification: true
+
+

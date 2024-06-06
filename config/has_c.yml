@@ -1,5 +1,0 @@
-rgcn_hidden_feats: [32, 32, 32]
-ffn_hidden_feats: 32
-rgcn_drop_out: 0.1
-ffn_drop_out: 0.1
-lr: 0.10

@@ -28,6 +28,7 @@ import warnings
 from core.pyPept.sequence import SequenceConstants
 from core.pyPept.sequence import split_outside
 
+
 ##########################################################################
 # Main class
 ##########################################################################
@@ -35,6 +36,7 @@ class Converter:
     """
     Class to convert between BILN and HELM (and viceversa)
     """
+
     def __init__(self, biln=None, helm=None):
         """Construct a BILN or HELM molecule. They can be read from a file
 
@@ -47,8 +49,7 @@ class Converter:
         self.polymerinfo = {"chains": [], "bonds": []}
 
         if biln is not None and helm is not None:
-            raise ValueError(
-                "Converter cannot be initialized with both BILN and HELM.")
+            raise ValueError("Converter cannot be initialized with both BILN and HELM.")
         elif biln is not None:
             self.eval_biln(biln=biln)
         elif helm is not None:
@@ -67,7 +68,7 @@ class Converter:
         """
         newseq = []
         for residue in sequence:
-            pat = re.sub(r'\[(.*)\]', r'\1', residue)  # remove brackets if necessary
+            pat = re.sub(r"\[(.*)\]", r"\1", residue)  # remove brackets if necessary
             newseq.append(pat)
 
         return newseq
@@ -86,35 +87,39 @@ class Converter:
 
         helm_parts = []
         while len(helm):
-            match = re.search(r'\$[^,;]', helm)  # this excludes any $ signs in the cxsmiles
+            match = re.search(
+                r"\$[^,;]", helm
+            )  # this excludes any $ signs in the cxsmiles
             if match is None:
-                match = re.search(r'\$', helm)  # search for all other $ signs
+                match = re.search(r"\$", helm)  # search for all other $ signs
 
             if match is None:
                 helm_parts.append(helm)  # done, no more parts
                 break
 
-            helm_parts.append(helm[:match.span()[0]])
-            helm = helm[match.span()[0] + 1:]  # remove the current part from helm
+            helm_parts.append(helm[: match.span()[0]])
+            helm = helm[match.span()[0] + 1 :]  # remove the current part from helm
 
         if len(helm_parts) == 4:
-            helm_parts.append('')
+            helm_parts.append("")
 
         # helm part 1 == list of simple polymers - split further
         list_of_simple_polymers = helm_parts[0]
         if SequenceConstants.helm_polymer in list_of_simple_polymers:
             list_of_simple_polymers = list_of_simple_polymers.split(
-                SequenceConstants.helm_polymer)
+                SequenceConstants.helm_polymer
+            )
         else:
             list_of_simple_polymers = [list_of_simple_polymers]
         helm_parts[0] = list_of_simple_polymers
 
         # split the bond information into individual chunks
         list_of_connections = helm_parts[1]
-        if list_of_connections != '':
+        if list_of_connections != "":
             if SequenceConstants.helm_polymer in list_of_connections:
                 list_of_connections = list_of_connections.split(
-                    SequenceConstants.helm_polymer)
+                    SequenceConstants.helm_polymer
+                )
             else:
                 list_of_connections = [list_of_connections]
         else:
@@ -176,17 +181,19 @@ class Converter:
         list_of_simple_polymers = []
         for count_chain, chain in enumerate(chains):
             poly = ".".join(chain)
-            list_of_simple_polymers.append(f'PEPTIDE{count_chain + 1}{{{poly}}}')
+            list_of_simple_polymers.append(f"PEPTIDE{count_chain + 1}{{{poly}}}")
 
         # compile bondinfo
         list_of_connections = []
         for bond in bonds:
             c1_val, r1_val, g1_val, c2_val, r2_val, g2_val = bond
-            bond_info = f'PEPTIDE{c1_val + 1},PEPTIDE{c2_val + 1},{r1_val + 1}:R{g1_val}-{r2_val + 1}:R{g2_val}'
+            bond_info = f"PEPTIDE{c1_val + 1},PEPTIDE{c2_val + 1},{r1_val + 1}:R{g1_val}-{r2_val + 1}:R{g2_val}"
             list_of_connections.append(bond_info)
 
         list_of_connections = SequenceConstants.helm_polymer.join(list_of_connections)
-        list_of_simple_polymers = SequenceConstants.helm_polymer.join(list_of_simple_polymers)
+        list_of_simple_polymers = SequenceConstants.helm_polymer.join(
+            list_of_simple_polymers
+        )
 
         if not list_of_simple_polymers:
             helm = None
@@ -211,59 +218,69 @@ class Converter:
 
         # split the helm string into its individual parts
         try:
-            list_of_simple_polymers, list_of_connections, groups, annotations,\
-            version = self.__split_helm(helm)
+            (
+                list_of_simple_polymers,
+                list_of_connections,
+                groups,
+                annotations,
+                version,
+            ) = self.__split_helm(helm)
 
         except (ValueError, IndexError):
-            warnings.warn(f'problem with HELM string - not enough sections: {helm}')
-            warnings.warn(f'need 5, have {len(self.__split_helm(helm))}')
+            warnings.warn(f"problem with HELM string - not enough sections: {helm}")
+            warnings.warn(f"need 5, have {len(self.__split_helm(helm))}")
             return None
 
         if len(list_of_simple_polymers) == 0:
-            warnings.warn(f'No simple polymers in HELM string {helm}')
+            warnings.warn(f"No simple polymers in HELM string {helm}")
             return None
 
         # go through the list of simple polymers (first component of HELM string),
         # parse them and put them into polymerinfo["chains"]
 
-        pattern = re.compile(r'{.*}')
+        pattern = re.compile(r"{.*}")
 
         id_val = []
         polymer = []
 
         for idx, chain in enumerate(list_of_simple_polymers):
-
             # remove any whitespace
             chain = chain.strip()
             # split each polymer into name/identifier and sequence
             match = pattern.search(chain)
             if match is None:
-                warnings.warn('No sequence information found in simple polymer - check HELM')
-                warnings.warn(f'Input: {chain}')
+                warnings.warn(
+                    "No sequence information found in simple polymer - check HELM"
+                )
+                warnings.warn(f"Input: {chain}")
                 return None
 
             # split each polymer into name/identifier and sequence
             seq = match.span()
-            id_chain = chain[:seq[0]]  # identifier
-            if id_chain[0:4] == 'CHEM':
-                warnings.warn('polymer contains an explicit chemical entity - \
-                missing or not recognized monomer:')
+            id_chain = chain[: seq[0]]  # identifier
+            if id_chain[0:4] == "CHEM":
+                warnings.warn(
+                    "polymer contains an explicit chemical entity - \
+                missing or not recognized monomer:"
+                )
                 warnings.warn(chain)
                 return None
-            if id_chain[0:7] != 'PEPTIDE':
-                warnings.warn('non-peptide chains in HELM - probably missing monomer')
-                warnings.warn(f'found: {id_chain}')
+            if id_chain[0:7] != "PEPTIDE":
+                warnings.warn("non-peptide chains in HELM - probably missing monomer")
+                warnings.warn(f"found: {id_chain}")
                 return None
-            id_chain = int(re.sub('PEPTIDE', '', id_chain))
+            id_chain = int(re.sub("PEPTIDE", "", id_chain))
 
-            poly = chain[seq[0] + 1:seq[1] - 1]  # sequence
+            poly = chain[seq[0] + 1 : seq[1] - 1]  # sequence
 
             if not poly:
-                warnings.warn(f'simple polymer {poly} is declared but not defined - has no length')
+                warnings.warn(
+                    f"simple polymer {poly} is declared but not defined - has no length"
+                )
                 return None
 
             # split into individual monomers.
-            poly = split_outside(poly, SequenceConstants.chain_separator, '[]')
+            poly = split_outside(poly, SequenceConstants.chain_separator, "[]")
 
             # remove brackets around monomer abbreviations with more than 1 letter
             poly = self.__remove_brackets(poly)
@@ -280,13 +297,13 @@ class Converter:
         bonds = []
         if len(list_of_connections) > 0:
             for idx, conn in enumerate(list_of_connections):
-                id1, id2, bond = conn.split(',')
+                id1, id2, bond = conn.split(",")
 
-                res1, rgroup1, res2, rgroup2 = re.split(r'[-:]', bond)
+                res1, rgroup1, res2, rgroup2 = re.split(r"[-:]", bond)
 
                 # need some reformatting
-                id1 = int(id1.replace('PEPTIDE', ''))
-                id2 = int(id2.replace('PEPTIDE', ''))
+                id1 = int(id1.replace("PEPTIDE", ""))
+                id2 = int(id2.replace("PEPTIDE", ""))
 
                 # translate back to current order of chains in polymerinfo["chains"]
                 id1 = id_val.index(id1)
@@ -297,8 +314,8 @@ class Converter:
                 res2 = int(res2) - 1
 
                 # get the number of the Rgroup (keep numbering 1-3)
-                rgroup1 = int(rgroup1.replace('R', ''))
-                rgroup2 = int(rgroup2.replace('R', ''))
+                rgroup1 = int(rgroup1.replace("R", ""))
+                rgroup2 = int(rgroup2.replace("R", ""))
 
                 bonds.append([id1, res1, rgroup1, id2, res2, rgroup2])
 
@@ -312,7 +329,7 @@ class Converter:
         polymerinfo = {"chains": [chain1, chain2, ...],
                        "bonds": [b1, b2, b3]}
         where chains contains the monomer abbreviation for each chain
-        and bonds contains the "extra" bonds explicitly given in HELM or 
+        and bonds contains the "extra" bonds explicitly given in HELM or
         BILN as a list.
 
         :param biln: the peptide BILN string
@@ -356,7 +373,9 @@ class Converter:
         list_of_connections = []
         for key in bondinfo:
             if len(bondinfo[key]) != 6:
-                warnings.warn(f'Error in bond information of BILN: bond {key} not correct')
+                warnings.warn(
+                    f"Error in bond information of BILN: bond {key} not correct"
+                )
                 return None
 
             c1_val, r1_val, g1_val, c2_val, r2_val, g2_val = bondinfo[key]
@@ -370,7 +389,7 @@ class Converter:
     def get_helm(self):
         """Return a HELM string from the PolymerInfo generated at
         instantiation.
-        
+
         :return: str"""
         helm = self.__to_helm()
         return helm
@@ -379,12 +398,13 @@ class Converter:
     def get_biln(self):
         """Return a BILN string from the PolymerInfo generated at
         instantiation.
-        
+
         :return: str"""
         biln = self.__to_biln()
         return biln
 
     # End of Converter pipeline functions.
+
 
 ############################################################
 # End of converter.py

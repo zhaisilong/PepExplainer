@@ -16,8 +16,15 @@ from pathlib import Path
 from copy import deepcopy
 import dill
 from typing import Union, Any
+from loguru import logger
+from . import thrombin
+from itertools import chain
 
 import yaml
+
+# 移除默认的日志处理器（即输出到控制台的处理器）
+logger.remove()
+logger.add("data.log", level="INFO", rotation="1 week")
 
 amino_acid_smiles = {
     "A": "C[C@H](N)C(O)=O",
@@ -65,6 +72,9 @@ amino_acid_symbol = {
     "V": "VAL",
 }
 
+from transformers import BertTokenizer
+
+
 def set_random_seed(seed: Optional[int] = None):
     """Set random seed. 大衍之数 55
     Parameters
@@ -73,7 +83,7 @@ def set_random_seed(seed: Optional[int] = None):
         Random seed to use
     """
     if seed is None:
-        seed = 55 
+        seed = 55
     random.seed(seed)
     np.random.seed(seed)
     dgl.random.seed(seed)
@@ -229,21 +239,23 @@ def init_atom_map_nums(mol) -> None:
         )
 
 
-def show_atom_map_nums(mol) -> None:
+def show_atom_map_nums(mol, size=(300, 300), prompt: Optional[str] = None) -> None:
     _mol = copy.deepcopy(mol)
     atoms = _mol.GetAtoms()
     for atom in atoms:
         atom.SetProp("molAtomMapNumber", str(atom.GetAtomMapNum()))
-    print("Image of molecule with Mapped Numbers:")
-    display(Draw.MolToImage(_mol))
+    if prompt:
+        print(prompt)
+    display(Draw.MolToImage(_mol, size=size))
 
 
-def show_atom_idx(mol, size: Tuple = (300, 300)) -> None:
+def show_atom_idx(mol, size: Tuple = (300, 300), prompt: Optional[str] = None) -> None:
     _mol = copy.deepcopy(mol)
     atoms = _mol.GetAtoms()
     for atom in atoms:
         atom.SetProp("molAtomMapNumber", str(atom.GetIdx()))
-    print("Image of molecule with Idx:")
+    if prompt:
+        print(prompt)
     display(Draw.MolToImage(_mol, size=size))
 
 
@@ -406,14 +418,22 @@ def get_maps2idx_dict(mol: rdchem.Mol) -> Dict:
 
 
 class Peptide:
-    def __init__(self, sequence: str, methods: Literal["linear", "cyclic", "thioether"] = "linear", force_field: bool = False, num_confs: int = 10):
+    def __init__(
+        self,
+        sequence: str,
+        methods: Literal["linear", "cyclic", "thioether", "thrombin"] = "linear",
+        force_field: bool = False,
+        num_confs: int = 10,
+    ):
         if len(sequence) < 1:
             raise ValueError("Peptide sequence must have a length larger than zero.")
-        self.sequence = sequence
-        
+
         # methods for post processing
-        if methods not in ["linear", "cyclic", "thioether"]:
-            raise ValueError("Invalid method. Allowed values: 'linear', 'cyclic', 'thioether'")
+        if methods not in ["linear", "cyclic", "thioether", "thrombin"]:
+            raise ValueError(
+                "Invalid method. Allowed values: 'linear', 'cyclic', 'thioether', 'thrombin'."
+            )
+        self.sequence = sequence
         self.methods = methods
 
         # Force Field
@@ -431,7 +451,10 @@ class Peptide:
         return repr(self)
 
     def __len__(self):
-        return len(self.sequence)
+        if self.methods == "thrombin":
+            return len(self.sequence.rsplit("-A0").split("-"))
+        else:
+            return len(self.sequence)
 
     @property
     def num_atoms(self) -> int:
@@ -448,9 +471,9 @@ class Peptide:
         _atoms = [atom for atom in atoms]
         for atom in _atoms[-11:]:
             symbol = atom.GetSymbol()
-            if symbol == 'S':
+            if symbol == "S":
                 return atom.GetIdx()
-    
+
     def single_conf_gen_MMFF(tgt_mol, num_confs=1000, seed=42):
         mol = deepcopy(tgt_mol)
         mol = Chem.AddHs(mol)
@@ -466,8 +489,10 @@ class Peptide:
                 continue
         mol = Chem.RemoveHs(mol)
         return mol
-    
-    def find_terminals_for_thioether(self, mol, amino_acid_idx=None) -> Tuple[Optional[int], Optional[int]]:
+
+    def find_terminals_for_thioether(
+        self, mol, amino_acid_idx=None
+    ) -> Tuple[Optional[int], Optional[int]]:
         # Handle the case when amino_acid_idx is None
         atoms = [x for x in mol.GetAtoms() if x.GetIdx() in amino_acid_idx]
 
@@ -478,7 +503,9 @@ class Peptide:
         for atom in atoms:
             if atom.GetSymbol() == "C" and atom.GetTotalDegree() == 3:
                 neighbors_idx = [neighbor.GetIdx() for neighbor in atom.GetNeighbors()]
-                oxygen_count = sum(1 for neighbor in atom.GetNeighbors() if neighbor.GetSymbol() == "O")
+                oxygen_count = sum(
+                    1 for neighbor in atom.GetNeighbors() if neighbor.GetSymbol() == "O"
+                )
                 outside_amino_acid = not set(neighbors_idx).issubset(amino_acid_idx)
                 if outside_amino_acid and oxygen_count == 1:
                     terminal_C = atom.GetIdx()
@@ -495,15 +522,171 @@ class Peptide:
 
         return terminal_C, terminal_N
 
+    def find_terminals_for_linear(
+        self,
+        mol,
+        amino_acid_idx=None,
+        is_N_terminal=False,
+        is_C_terminal=False,
+        if_P=False,
+    ) -> Tuple[Optional[int], Optional[int]]:
+        # Handle the case when amino_acid_idx is None
+        assert not (
+            is_N_terminal and is_C_terminal
+        ), "is_N_terminal and is_C_terminal cannot both be True at the same time."
+        if if_P:
+            P_N = 1
+        else:
+            P_N = 0
+        atoms = [x for x in mol.GetAtoms() if x.GetIdx() in amino_acid_idx]
+
+        terminal_C = None
+        terminal_N = None
+
+        if is_N_terminal:
+            # Finding terminal C
+            for atom in atoms:
+                if atom.GetSymbol() == "C" and atom.GetTotalDegree() == 3:
+                    neighbors_idx = [
+                        neighbor.GetIdx() for neighbor in atom.GetNeighbors()
+                    ]
+                    oxygen_count = sum(
+                        1
+                        for neighbor in atom.GetNeighbors()
+                        if neighbor.GetSymbol() == "O"
+                    )
+                    outside_amino_acid = not set(neighbors_idx).issubset(amino_acid_idx)
+                    if outside_amino_acid and oxygen_count == 1:
+                        terminal_C = atom.GetIdx()
+                        break
+            # Finding terminal N
+            if terminal_C:
+                for atom in atoms:
+                    if atom.GetSymbol() == "N" and atom.GetTotalNumHs() == (2 - P_N):
+                        path = Chem.rdmolops.GetShortestPath(
+                            mol, atom.GetIdx(), terminal_C
+                        )
+                        if len(path) == 3:
+                            terminal_N = atom.GetIdx()
+                            break
+            return terminal_C, terminal_N
+
+        if is_C_terminal:
+            # Finding terminal C
+            for atom in atoms:
+                if atom.GetSymbol() == "C" and atom.GetTotalDegree() == 3:
+                    neighbors_idx = [
+                        neighbor.GetIdx() for neighbor in atom.GetNeighbors()
+                    ]
+                    oxygen_count = sum(
+                        1
+                        for neighbor in atom.GetNeighbors()
+                        if neighbor.GetSymbol() == "O"
+                    )
+                    outside_amino_acid = set(neighbors_idx).issubset(amino_acid_idx)
+                    if outside_amino_acid and oxygen_count == 2:
+                        terminal_C = atom.GetIdx()
+                        break
+            # Finding terminal N
+            for atom in atoms:
+                if terminal_C:
+                    if atom.GetSymbol() == "N" and atom.GetTotalNumHs() == (1 - P_N):
+                        path = Chem.rdmolops.GetShortestPath(
+                            mol, atom.GetIdx(), terminal_C
+                        )
+                        if len(path) == 3:
+                            terminal_N = atom.GetIdx()
+                            break
+            return terminal_C, terminal_N
+
+        # Finding terminal C
+        for atom in atoms:
+            if atom.GetSymbol() == "C" and atom.GetTotalDegree() == 3:
+                neighbors_idx = [neighbor.GetIdx() for neighbor in atom.GetNeighbors()]
+                oxygen_count = sum(
+                    1 for neighbor in atom.GetNeighbors() if neighbor.GetSymbol() == "O"
+                )
+                outside_amino_acid = not set(neighbors_idx).issubset(amino_acid_idx)
+                if outside_amino_acid and oxygen_count == 1:
+                    terminal_C = atom.GetIdx()
+                    break
+        # Finding terminal N
+        if terminal_C:
+            for atom in atoms:
+                if atom.GetSymbol() == "N" and atom.GetTotalNumHs() == (1 - P_N):
+                    path = Chem.rdmolops.GetShortestPath(mol, atom.GetIdx(), terminal_C)
+                    if len(path) == 3:
+                        terminal_N = atom.GetIdx()
+                        break
+        return terminal_C, terminal_N
+
     def get_structure(self) -> List[List[int]]:
         """获取子结构"""
         self.mol = self.get_mol()
         assert self.mol is not None
 
         if self.methods == "linear":
-            self.amino_acids = list(Chem.MolToSequence(self.mol))
-            self.structure = None
-        
+            amino_acids = []
+            structure = []
+            substructre = []
+            added_ResidueNumber = set()
+
+            for i, atom in enumerate(self.mol.GetAtoms()):
+                info = atom.GetMonomerInfo()
+                residue_number = info.GetResidueNumber()
+                name = info.GetResidueName()
+
+                if residue_number not in added_ResidueNumber:
+                    amino_acids.append(name)
+                    added_ResidueNumber.add(residue_number)
+                    if residue_number == 1:
+                        pass
+                    else:
+                        structure.append(substructre)
+                        substructre = []
+
+                substructre.append(atom.GetIdx())
+            structure.append(substructre)  # 添加最后一个
+
+            begins = []
+            ends = []
+            # Single pass loop to gather all the necessary information
+            for i, substructure in enumerate(structure):
+                if i == 0:
+                    terminal_C, terminal_N = self.find_terminals_for_linear(
+                        self.mol,
+                        substructure,
+                        is_N_terminal=True,
+                        if_P=(amino_acids[i] == "PRO"),
+                    )
+                    begins.append(terminal_C)
+
+                elif i == len(structure) - 1:
+                    terminal_C, terminal_N = self.find_terminals_for_linear(
+                        self.mol,
+                        substructure,
+                        is_C_terminal=True,
+                        if_P=(amino_acids[i] == "PRO"),
+                    )
+                    ends.append(terminal_N)
+
+                else:
+                    terminal_C, terminal_N = self.find_terminals_for_linear(
+                        self.mol, substructure, if_P=(amino_acids[i] == "PRO")
+                    )
+                    begins.append(terminal_C)
+                    ends.append(terminal_N)
+
+            structure_bond = [[a, b] for a, b in zip(begins, ends)]
+            self.structure = deepcopy(structure)
+            self.amino_acids = deepcopy(amino_acids)
+            self.structure_bond = deepcopy(structure_bond)
+
+        elif self.methods == "thrombin":
+            self.structure = deepcopy(self.reaction.structure)
+            self.structure_bond = deepcopy(self.reaction.structure_bond)
+            self.amino_acids = deepcopy(self.reaction.amino_acids)
+
         elif self.methods == "cyclic":
             pass
 
@@ -533,14 +716,18 @@ class Peptide:
             structure.append([i])  # add NH2 to the tail G
             mol_seq = Chem.MolToSequence(self.mol)
 
-            assert len(mol_seq) == len(name) -2  == len(structure) -2 # 一个是 ACE, 另一个是 NH2
+            assert (
+                len(mol_seq) == len(name) - 2 == len(structure) - 2
+            )  # 一个是 ACE, 另一个是 NH2
 
             begins = [self.begin_index]
             ends = [self.end_index]
 
             # Single pass loop to gather all the necessary information
             for i, substructure in enumerate(structure):
-                terminal_info = self.find_terminals_for_thioether(self.mol, substructure)
+                terminal_info = self.find_terminals_for_thioether(
+                    self.mol, substructure
+                )
                 if 0 < i < len(structure) - 2:
                     begins.append(terminal_info[0])
                 if 1 < i < len(structure) - 1:
@@ -553,17 +740,25 @@ class Peptide:
             # return structure, name
             structure[0:2] = [structure[0] + structure[1]]
             structure[-2:] = [structure[-2] + structure[-1]]
-            
+
             self.structure = deepcopy(structure)
             self.amino_acids = deepcopy(name[1:-1])
-    
+
     def get_mol(self) -> rdchem.Mol:
         if self.methods == "linear":
             mol = Chem.MolFromSequence(self.sequence)
+            self.begin_index = 0  # 线肽开始的位置是 0
+            self.end_index = len(mol.GetAtoms()) - 1  # 结束的位置是 长度-1
+        elif self.methods == "thrombin":
+            self.reaction = Reaction(self.sequence)
+            self.reaction()
+            mol = self.reaction.product
         elif self.methods == "cyclic":
             pass
         elif self.methods == "thioether":
-            HELM_str = "PEPTIDE1{[ac].Y." + ".".join(self.sequence) + ".C.G.[am]}$$$$V2.0"
+            HELM_str = (
+                "PEPTIDE1{[ac].Y." + ".".join(self.sequence) + ".C.G.[am]}$$$$V2.0"
+            )
             mol = Chem.MolFromHELM(HELM_str)
             atoms = mol.GetAtoms()
             begin_index = 2
@@ -572,7 +767,7 @@ class Peptide:
             mw.AddBond(begin_index, end_index, Chem.BondType.SINGLE)
             mol = mw.GetMol()
             Chem.SanitizeMol(mol)
-            
+
             # 定义成环的两个位置
             self.begin_index = begin_index
             self.end_index = end_index
@@ -582,6 +777,7 @@ class Peptide:
             mol = self.single_conf_gen_MMFF(mol, num_confs=self.num_confs)
 
         return mol
+
 
 def construct_RGCN_mol_graph_from_mol(mol, smask):
     g = dgl.DGLGraph()
@@ -620,7 +816,13 @@ def construct_RGCN_mol_graph_from_mol(mol, smask):
     return g
 
 
-def build_mol_graph_data(dataset_peptide, label_name, peptide_name, methods: Literal["linear", "cyclic", "thioether"] = "linear", max_workers: int = None,):
+def build_mol_graph_data(
+    dataset_peptide,
+    label_name,
+    peptide_name,
+    methods: Literal["linear", "cyclic", "thioether", "thrombin"] = "linear",
+    max_workers: int = None,
+):
     dataset_gnn = []
     failed_molecule = []
     labels = dataset_peptide[label_name]
@@ -658,6 +860,7 @@ def build_mol_graph_data(dataset_peptide, label_name, peptide_name, methods: Lit
         )
     )
     return dataset_gnn
+
 
 # def process_molecule(i, _peptide, label, split_ind, methods):
 #     peptide = Peptide(_peptide, methods=methods)
@@ -717,7 +920,7 @@ def build_mol_graph_data(dataset_peptide, label_name, peptide_name, methods: Lit
 #         futures = []
 #         for i, _peptide in enumerate(peptideList):
 #             futures.append(executor.submit(process_molecule, i, _peptide, labels.loc[i], split_index.loc[i], methods))
-        
+
 #         for future in tqdm(concurrent.futures.as_completed(futures), total=molecule_number):
 #             result = future.result()
 #             if isinstance(result, tuple):
@@ -727,6 +930,7 @@ def build_mol_graph_data(dataset_peptide, label_name, peptide_name, methods: Lit
 
 #     print("{}({}) is transformed to mol graph failed!".format(failed_molecule, len(failed_molecule)))
 #     return dataset_gnn
+
 
 def build_mol_graph_data_for_peptide(
     dataset_peptide: pd.DataFrame,
@@ -762,14 +966,14 @@ def build_mol_graph_data_for_peptide(
             aa_mask = []
             aa_name = []
 
-            for substructure, amino_acid in zip(
-                peptide.structure, peptide.amino_acids
-            ):
+            for substructure, amino_acid in zip(peptide.structure, peptide.amino_acids):
                 aa_mask.append(substructure)
                 aa_name.append(amino_acid)
             for j, aa_mask_j in enumerate(aa_mask):
                 try:
-                    g_rgcn = construct_RGCN_mol_graph_from_mol(peptide.mol, smask=aa_mask_j)
+                    g_rgcn = construct_RGCN_mol_graph_from_mol(
+                        peptide.mol, smask=aa_mask_j
+                    )
                     molecule = [
                         peptide.sequence,
                         peptide.smiles,
@@ -803,6 +1007,7 @@ def build_mol_graph_data_for_peptide(
         )
     )
     return dataset_gnn
+
 
 def make_fake_cv(path):
     for fmat in ["_prediction.csv", "_smask_index.npy"]:
@@ -886,6 +1091,7 @@ def collate_molgraphs(data):
     labels = torch.tensor(labels)
     return peptide, smiles, rgcn_bg, labels, smask, sub_name
 
+
 def pos_weight(train_set):
     """get the weight of positives in specified dataset"""
     sequence, smiles, g_rgcn, labels, smask, sub_name = map(list, zip(*train_set))
@@ -932,13 +1138,15 @@ class EarlyStopping(object):
         if filename is None:
             task_name = task_name
             if seed is None:
-                filename = f"../model/{task_name}_{sub_type}_early_stop.pth"
+                filename = f"./model/{task_name}_{sub_type}_early_stop.pth"
             else:
-                filename = f"../model/{task_name}_{sub_type}_{seed}_early_stop.pth"
+                filename = f"./model/{task_name}_{sub_type}_{seed}_early_stop.pth"
         if seed is not None:
-            former_filename = f"../model/{former_task_name}_{sub_type}_{seed}_early_stop.pth"
+            former_filename = (
+                f"./model/{former_task_name}_{sub_type}_{seed}_early_stop.pth"
+            )
         else:
-            former_filename = f"../model/{former_task_name}_{sub_type}_early_stop.pth"
+            former_filename = f"./model/{former_task_name}_{sub_type}_early_stop.pth"
 
         assert mode in ["higher", "lower"]
         self.mode = mode
@@ -953,7 +1161,7 @@ class EarlyStopping(object):
         self.former_filename = former_filename
         self.best_score = None
         self.early_stop = False
-        self.pretrained_model = "../model/" + pretrained_model
+        self.pretrained_model = "./model/" + pretrained_model
 
     def _check_higher(self, score, prev_best_score):
         return score > prev_best_score
@@ -1016,17 +1224,18 @@ class EarlyStopping(object):
         # model.load_state_dict(torch.load(self.former_filename, map_location=torch.device('cpu'))['model_state_dict'])
 
     def load_pretrained_model(self, model):
-        """Load pretrained model.
-        """
+        """Load pretrained model."""
         model.load_state_dict(torch.load(self.pretrained_model)["model_state_dict"])
 
 
-def run_a_train_epoch(args, model, data_loader, loss_criterion, optimizer, scheduler = None):
+def run_a_train_epoch(
+    args, model, data_loader, loss_criterion, optimizer, scheduler=None, use_seq=False
+):
     model.train()
     train_meter = Meter()
     total_loss = 0
     n_mol = 0
-    for batch_id, batch_data in tqdm(enumerate(data_loader), total=len(data_loader)):
+    for batch_id, batch_data in tqdm(enumerate(data_loader), total=len(list(data_loader))):
         sequence, smiles, rgcn_bg, labels, smask_idx, sub_name = batch_data
 
         # Move data to device once
@@ -1046,7 +1255,14 @@ def run_a_train_epoch(args, model, data_loader, loss_criterion, optimizer, sched
         )
 
         # Compute predictions and loss
-        preds, weight = model(rgcn_bg, rgcn_node_feats, rgcn_edge_feats, smask_feats)
+        if use_seq:
+            preds, weight = model(
+                rgcn_bg, rgcn_node_feats, rgcn_edge_feats, smask_feats, sequence
+            )
+        else:
+            preds, weight = model(
+                rgcn_bg, rgcn_node_feats, rgcn_edge_feats, smask_feats
+            )
         loss = (loss_criterion(preds, labels)).mean()
 
         # Backpropagation
@@ -1074,7 +1290,7 @@ def run_a_train_epoch(args, model, data_loader, loss_criterion, optimizer, sched
             preds,
             weight,
         )
-    
+
         torch.cuda.empty_cache()
 
     train_score = round(train_meter.compute_metric(args["metric_name"]), 4)
@@ -1083,7 +1299,15 @@ def run_a_train_epoch(args, model, data_loader, loss_criterion, optimizer, sched
     return train_score, average_loss
 
 
-def run_an_eval_epoch(args, model, data_loader, loss_criterion, out_path, stage: str = "train"):
+def run_an_eval_epoch(
+    args,
+    model,
+    data_loader,
+    loss_criterion,
+    out_path,
+    stage: str = "train",
+    use_seq=False,
+):
     print(f"{stage} set evaling:")
     model.eval()
 
@@ -1100,7 +1324,9 @@ def run_an_eval_epoch(args, model, data_loader, loss_criterion, out_path, stage:
         out_path = str(out_path)
 
     with torch.no_grad():
-        for batch_id, batch_data in tqdm(enumerate(data_loader), total=len(data_loader)):
+        for batch_id, batch_data in tqdm(
+            enumerate(data_loader), total=len(data_loader)
+        ):
             sequence, smiles, rgcn_bg, labels, smask_idx, sub_name = batch_data
 
             # Move data to device once
@@ -1122,9 +1348,14 @@ def run_an_eval_epoch(args, model, data_loader, loss_criterion, out_path, stage:
             )
 
             # Compute predictions and loss
-            preds, weight = model(
-                rgcn_bg, rgcn_node_feats, rgcn_edge_feats, smask_feats
-            )
+            if use_seq:
+                preds, weight = model(
+                    rgcn_bg, rgcn_node_feats, rgcn_edge_feats, smask_feats, sequence
+                )
+            else:
+                preds, weight = model(
+                    rgcn_bg, rgcn_node_feats, rgcn_edge_feats, smask_feats
+                )
             loss = (loss_criterion(preds, labels)).mean()
 
             sequence_list += sequence
@@ -1138,7 +1369,7 @@ def run_an_eval_epoch(args, model, data_loader, loss_criterion, out_path, stage:
                 rgcn_bg.ndata["weight"] = weight
                 rgcn_bg.edata["edge"] = rgcn_edge_feats
                 g_list += dgl.unbatch(rgcn_bg)
-            
+
             eval_meter.update(preds, labels)
             smiles_list += smiles
 
@@ -1181,7 +1412,11 @@ def run_an_eval_epoch(args, model, data_loader, loss_criterion, out_path, stage:
     prediction_pd["sub_name"] = sub_name_list
 
     if out_path is not None:
-        np.save(out_path + "_smask_index.npy", np.array(smask_idx_list, dtype=object), allow_pickle=True)
+        np.save(
+            out_path + "_smask_index.npy",
+            np.array(smask_idx_list, dtype=object),
+            allow_pickle=True,
+        )
         prediction_pd.to_csv(out_path + "_prediction.csv", index=False)
 
     if args["classification"]:
@@ -1336,6 +1571,7 @@ def pro2label(x):
     else:
         return 1
 
+
 def add_params(yml_path: Union[str, Path], args: Dict, overwrite: bool = True):
     if isinstance(yml_path, str):
         path = Path(yml_path)
@@ -1359,19 +1595,33 @@ def add_params(yml_path: Union[str, Path], args: Dict, overwrite: bool = True):
         raise FileExistsError
 
 
-def write_results(model, data_loader, data_set, loss_criterion, prediction_dir, seed, args, stage: str = "train"):
+def write_results(
+    model,
+    data_loader,
+    data_set,
+    loss_criterion,
+    prediction_dir,
+    seed,
+    args,
+    stage: str = "train",
+    use_seq: bool = False,
+):
     if seed is not None:
-        out_path = prediction_dir / f"{args['task_name']}_{args['sub_type']}_{seed}_{data_set}"
+        out_path = (
+            prediction_dir / f"{args['task_name']}_{args['sub_type']}_{seed}_{data_set}"
+        )
     else:
         out_path = prediction_dir / f"{args['task_name']}_{args['sub_type']}_{data_set}"
-    
+
     stop_list, _ = run_an_eval_epoch(
-        args, model, data_loader, loss_criterion, out_path, stage
+        args, model, data_loader, loss_criterion, out_path, stage, use_seq=use_seq
     )
     print(f"{data_set} results:", ",".join([str(i) for i in stop_list]))
 
+
 def attr2tag(attr):
     return -1 if attr < 0 else 1
+
 
 def get_seg(value, seg_type: Literal["bio", "del"] = "del") -> int:
     """
@@ -1390,8 +1640,10 @@ def get_seg(value, seg_type: Literal["bio", "del"] = "del") -> int:
     else:
         raise ValueError(f"Unsupported seg_type: {seg_type}")
 
+
 def get_label(value, threshold) -> int:
     return 1 if value < threshold else 0
+
 
 def _store(data: Any, file_path: Path) -> None:
     """Store a Python object in a file using dill serialization.
@@ -1402,6 +1654,7 @@ def _store(data: Any, file_path: Path) -> None:
     """
     with file_path.open("wb") as file:
         dill.dump(data, file)
+
 
 def _restore(file_path: Path) -> Any:
     """Restore a Python object from a file using dill serialization.
@@ -1415,6 +1668,7 @@ def _restore(file_path: Path) -> Any:
     with file_path.open("rb") as file:
         return dill.load(file)
 
+
 def store(data: Any, file_path: Union[str, Path], force: bool = False) -> None:
     """Store a Python object in a file with optional overwrite protection.
 
@@ -1427,11 +1681,12 @@ def store(data: Any, file_path: Union[str, Path], force: bool = False) -> None:
         FileExistsError: If the file already exists and force is not set to True.
     """
     path = Path(file_path)
-    
+
     if path.exists() and not force:
         raise FileExistsError(f"{path} already exists. Set force=True to overwrite.")
-    
+
     _store(data, path)
+
 
 def restore(file_path: Union[str, Path]) -> Any:
     """Restore a Python object from a file.
@@ -1446,8 +1701,268 @@ def restore(file_path: Union[str, Path]) -> Any:
         FileNotFoundError: If the file does not exist.
     """
     path = Path(file_path)
-    
+
     if not path.exists():
         raise FileNotFoundError(f"{path} not found")
-    
+
     return _restore(path)
+
+
+class Reaction:
+    def __init__(self, reactants: Union[List[str], str]):
+        """
+        Initialize reaction class
+
+        Args:
+        reactants (List[str]): List of strings of fragment names
+
+        """
+        # Initialize fragments
+        if isinstance(reactants, str):
+            self._reactants = reactants.split("-")
+        elif isinstance(reactants, list):
+            self._reactants = reactants
+
+        self.starter, self.frag1, self.frag2, self.ender, self.linker, self.acid = (
+            getattr(thrombin, frag)() for frag in self._reactants
+        )
+        self.reactants = [
+            self.starter,
+            self.frag1,
+            self.frag2,
+            self.ender,
+            self.linker,
+            self.acid,
+        ]
+
+        # Remap atom indices
+        self.remap_Idx()
+
+        # Combine molecules
+        self.get_combined_mol()
+
+        # Success flag
+        self.success = False
+
+    def remap_Idx(self) -> None:
+        """
+        Remap atom indices in the reaction
+
+        """
+        mapped_molecules = []
+        base_index = 0
+        init_atom_map_nums(self.reactants[0].mol)
+        current_index_range = range(
+            base_index, base_index + self.reactants[0].num_atoms
+        )
+        mapped_molecules.append(list(current_index_range))
+        base_index += self.reactants[0].num_atoms
+
+        for i in range(1, len(self.reactants)):
+            if self.reactants[i].mol:
+                set_atom_map_nums(
+                    self.reactants[i].mol,
+                    [base_index + j for j in range(self.reactants[i].num_atoms)],
+                )
+                self.reactants[i].remap_Idx(base_index)
+                current_index_range = range(
+                    base_index, base_index + self.reactants[i].num_atoms
+                )
+                mapped_molecules.append(list(current_index_range))
+                base_index += self.reactants[i].num_atoms
+
+        self.mapped_molecules = mapped_molecules
+
+    def get_combined_mol(self) -> Chem.rdchem.RWMol:
+        """
+        Get the combined molecule of the reaction
+
+        Returns:
+        Chem.rdchem.RWMol: The combined molecule
+
+        """
+        combined_mol = self.reactants[0].mol
+        for i in range(1, len(self.reactants)):
+            if self.reactants[i].mol:
+                combined_mol = Chem.CombineMols(combined_mol, self.reactants[i].mol)
+        self.combined_mol = Chem.RWMol(combined_mol)
+
+    def remove_atoms(self, Idx: Union[List[int], int]) -> None:
+        if isinstance(Idx, int):
+            self.combined_mol.RemoveAtom(
+                get_atom_Idx_by_map_num(self.combined_mol, Idx)
+            )
+        elif isinstance(Idx, list):
+            for i in Idx:
+                self.combined_mol.RemoveAtom(
+                    get_atom_Idx_by_map_num(self.combined_mol, i)
+                )
+
+    def add_bond(self, Idx1: int, Idx2: int) -> None:
+        """
+        Add a bond between two atoms in the combined molecule
+
+        Args:
+        Idx1 (int): The index of the first atom
+        Idx2 (int): The index of the second atom
+
+        """
+        self.combined_mol.AddBond(
+            get_atom_Idx_by_map_num(self.combined_mol, Idx1),
+            get_atom_Idx_by_map_num(self.combined_mol, Idx2),
+            order=Chem.rdchem.BondType.SINGLE,
+        )
+
+    def add_bonds(self, Idx_list: List[Tuple[int, int]]) -> None:
+        """
+        Add bonds between two atoms in the combined molecule
+
+        Args:
+        Idx_list (List[Tuple[int, int]]): A list of tuples of atom indices
+
+        """
+        try:
+            for Idx1, Idx2 in Idx_list:
+                self.combined_mol.AddBond(
+                    get_atom_Idx_by_map_num(self.combined_mol, Idx1),
+                    get_atom_Idx_by_map_num(self.combined_mol, Idx2),
+                    order=Chem.rdchem.BondType.SINGLE,
+                )
+        except Exception as e:
+            logger.exception(f"Error Idx for bond addition since {e}")
+
+    def show_combined_mol(self, *args, **kwargs) -> None:
+        """
+        Show the combined molecule
+
+        """
+        show_atom_map_nums(self.combined_mol, *args, **kwargs)
+
+    @property
+    def format(self) -> Optional[str]:
+        """
+        Get the format of the reaction
+
+        Returns:
+        Optional[str]: The format of the reaction
+
+        """
+        if "Cysteine" in self._reactants:  # 不同的 starter
+            if self.frag1.group == "backbone" and self.frag2.group == "side_chain":
+                return "format1"
+            elif self.frag1.group == "side_chain" and self.frag2.group == "backbone":
+                return "format2"
+            else:
+                return None
+        elif "ThiomalicAcid" in self._reactants:  # 不同的 starter
+            if self.frag1.group == "diamino_acid":
+                return "format3"
+            elif self.frag2.group == "diamino_acid":
+                return "format4"
+            else:
+                return None
+        else:
+            return None
+
+    def __call__(
+        self, verbose: bool = False, *args, **kwargs
+    ) -> Optional[Chem.rdchem.Mol]:
+        if verbose:
+            self.show_combined_mol()
+
+        if not self.success:
+            assert len(self._reactants) == 6, "Six fragments are required."
+            logger.debug(
+                f"run peptide {'-'.join(self._reactants)} reaction at {self.format}"
+            )
+            self.remove_atoms(self.dropped_atoms)
+            self.add_bonds(self.structure_bond)
+
+        if verbose:
+            self.show_combined_mol()
+        self.success = True
+        return self.product
+
+    @property
+    def structure_bond(self) -> List[List[int]]:
+        """
+        List of lists of atom indices representing the bonds structure of the reaction
+
+        """
+        bonds_list = [
+            [self.starter.C_Idx, self.frag1.N_Idx],
+            [self.frag1.C_Idx, self.frag2.N_Idx],
+            [self.frag2.C_Idx, self.ender.N_Idx],
+            [self.linker.right, self.starter.S_Idx],
+            [self.ender.S_Idx, self.linker.left],
+        ]
+        if self.format in ("format1", "format2"):
+            if self.acid.mol:
+                bonds_list.append([self.acid.C_Idx, self.starter.N_Idx])
+        elif self.format in ("format3", "format4"):
+            if self.acid.mol:
+                if self.frag1.group == "diamino_acid":
+                    bonds_list.append([self.acid.C_Idx, self.frag1.N2_Idx])
+                elif self.frag2.group == "diamino_acid":
+                    bonds_list.append([self.acid.C_Idx, self.frag2.N2_Idx])
+        return bonds_list
+
+    @property
+    def dropped_atoms(self) -> List[int]:
+        atom_list = [self.starter.O_Idx, self.frag1.O_Idx, self.frag2.O_Idx]
+        if self.acid.mol:
+            atom_list.append(self.acid.O_Idx)
+        return atom_list
+
+    @property
+    def structure(self) -> List[List[int]]:
+        """
+        List of lists of atom indices representing the structure of the reaction
+
+        """
+        structure = []
+        for molecule in self.mapped_molecules:
+            substructure = []
+            for idx in molecule:
+                atom_idx = get_atom_Idx_by_map_num(self.combined_mol, idx)
+                if atom_idx is not None:
+                    substructure.append(atom_idx)
+            structure.append(substructure)
+        x, y = (
+            len(list(chain.from_iterable(structure))),
+            self.combined_mol.GetNumAtoms(),
+        )
+        assert x == y, f"Len structure {x} unequal to len combined_mol {y}"
+        return structure
+
+    @property
+    def product(self) -> Optional[Chem.rdchem.Mol]:
+        """
+        Get the product molecule
+
+        Returns:
+        Optional[Chem.rdchem.Mol]: The product molecule
+
+        """
+        if self.success:
+            return self.combined_mol.GetMol()
+        else:
+            return None
+
+    @property
+    def smiles(self) -> Optional[str]:
+        """
+        Get the SMILES string of the product molecule
+
+        Returns:
+        Optional[str]: The SMILES string
+
+        """
+        if self.success and self.product is not None:
+            return Chem.MolToSmiles(self.product)
+        else:
+            return None
+
+    @property
+    def amino_acids(self) -> List[str]:
+        return self._reactants[:-1] if "A0" in self._reactants else self._reactants

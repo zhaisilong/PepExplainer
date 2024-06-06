@@ -9,6 +9,14 @@ import torch
 from tqdm.auto import tqdm
 from core.utils import add_params, construct_RGCN_mol_graph_from_mol, Peptide
 import numpy as np
+from transformers import BertTokenizer
+
+from loguru import logger
+logger.remove()
+logger.add("debug.log", level="DEBUG", rotation="1 week")
+
+def sigmoid(x):
+    return 1 / (1 + np.exp(-x))
 
 
 class WeightAndSum(nn.Module):
@@ -218,6 +226,122 @@ class BaseGNN(nn.Module):
         return nn.Sequential(nn.Linear(hidden_feats, out_feats))
 
 
+class SeqGNN(nn.Module):
+    def __init__(
+        self,
+        gnn_rgcn_out_feats,
+        ffn_hidden_feats,
+        ffn_dropout=0.25,
+        classification=True,
+        vocab_size=70,
+        embedding_dim=256,
+        max_length=12,
+        num_heads=2,
+        dim_feedforward=256,
+        dropout=0.1,
+        num_layers=4,
+    ):
+        super(SeqGNN, self).__init__()
+        self.max_length = max_length
+        self.classification = classification
+        self.rgcn_gnn_layers = nn.ModuleList()
+        self.readout = WeightAndSum(gnn_rgcn_out_feats)
+        self.embedding = nn.Embedding(vocab_size, embedding_dim)
+        self.positional_encoding = nn.Parameter(
+            torch.zeros(1, self.max_length, embedding_dim)
+        )
+        self.transformer_encoder = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                d_model=embedding_dim,
+                nhead=num_heads,
+                dim_feedforward=dim_feedforward,
+                dropout=dropout,
+            ),
+            num_layers=num_layers,
+        )
+        self.transformer_encoder_fusion = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                d_model=gnn_rgcn_out_feats,
+                nhead=num_heads,
+                dim_feedforward=dim_feedforward,
+                dropout=dropout,
+            ),
+            num_layers=num_layers,
+        )
+
+        self.fc_layers1 = self.fc_layer(
+            ffn_dropout, 2*gnn_rgcn_out_feats, ffn_hidden_feats
+        )
+        self.fc_layers2 = self.fc_layer(ffn_dropout, ffn_hidden_feats, ffn_hidden_feats)
+        self.fc_layers3 = self.fc_layer(ffn_dropout, ffn_hidden_feats, ffn_hidden_feats)
+        self.fc_layers4 = self.fc_layer(ffn_dropout, dim_feedforward*self.max_length, gnn_rgcn_out_feats)
+        self.predict = self.output_layer(ffn_hidden_feats, 1)
+        self.tokenizer = BertTokenizer(
+            "/home/light/zsl/sme.v3/core/peptide_thrombin_vocab.txt",
+            do_lower_case=False,
+            do_basic_tokenize=False,
+        )
+
+    def forward(
+        self,
+        rgcn_bg,
+        rgcn_node_feats,
+        rgcn_edge_feats,
+        smask_feats,
+        seqs,
+        get_embds=None,
+    ):
+        """Multi-task prediction for a batch of molecules"""
+        # Update atom features with GNNs
+        for rgcn_gnn in self.rgcn_gnn_layers:
+            rgcn_node_feats = rgcn_gnn(rgcn_bg, rgcn_node_feats, rgcn_edge_feats)
+        # Compute molecule features from atom features and bond features
+        graph_feats, weight = self.readout(rgcn_bg, rgcn_node_feats, smask_feats)  # [batch_size, gnn_rgcn_out_feats]
+
+        # seqs = [" ".join(list(seq)) for seq in seqs]
+        seqs = [seq.replace("-", " ") for seq in seqs]
+
+        encoded_inputs = self.tokenizer(
+            seqs,
+            padding="max_length",
+            max_length=self.max_length,
+            truncation=True,
+            return_tensors="pt",
+        )
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        seqs_ = encoded_inputs["input_ids"].to(device)
+
+        seqs_ = self.embedding(seqs_) + self.positional_encoding[:, :self.max_length, :]
+        # seq_feats = self.transformer_encoder(seqs_)[:, 0, :]
+        seq_feats = torch.flatten(self.transformer_encoder(seqs_), start_dim=1)
+        h4 = self.fc_layers4(seq_feats)
+
+        feats = torch.concat([graph_feats, h4], dim=1)  # [batch_size, 2*gnn_rgcn_out_feats]
+
+        # # feats.reshape(-1, self.max_length, -1)
+        # print(feats.unsqueeze(-1).shape)
+        # h0 = self.transformer_encoder_fusion(feats)
+        h1 = self.fc_layers1(feats)
+        h2 = self.fc_layers2(h1)
+        h3 = self.fc_layers3(h2)
+        out = self.predict(h3)
+        if get_embds:
+            return out, weight, graph_feats
+        else:
+            return out, weight
+
+    def fc_layer(self, dropout, in_feats, hidden_feats):
+        return nn.Sequential(
+            nn.Dropout(dropout),
+            nn.Linear(in_feats, hidden_feats),
+            nn.ReLU(),
+            nn.BatchNorm1d(hidden_feats),
+        )
+
+    def output_layer(self, hidden_feats, out_feats):
+        return nn.Sequential(nn.Linear(hidden_feats, out_feats))
+
+
 class RGCN(BaseGNN):
     """HRGCN based predictor for multitask prediction on molecular graphs
     We assume each task requires to perform a binary classification.
@@ -257,6 +381,64 @@ class RGCN(BaseGNN):
         fixed=False,
     ):
         super(RGCN, self).__init__(
+            gnn_rgcn_out_feats=rgcn_hidden_feats[-1],
+            ffn_hidden_feats=ffn_hidden_feats,
+            ffn_dropout=ffn_dropout,
+            classification=classification,
+        )
+        for i in range(len(rgcn_hidden_feats)):
+            rgcn_out_feats = rgcn_hidden_feats[i]
+            self.rgcn_gnn_layers.append(
+                RGCNLayer(
+                    rgcn_node_feats,
+                    rgcn_out_feats,
+                    loop=True,
+                    rgcn_drop_out=rgcn_drop_out,
+                    fixed=fixed,
+                )
+            )
+            rgcn_node_feats = rgcn_out_feats
+
+
+class SeqRGCN(SeqGNN):
+    """HRGCN based predictor for multitask prediction on molecular graphs
+    We assume each task requires to perform a binary classification.
+    Parameters
+    ----------
+    in_feats : int
+        Number of input atom features
+    Rgcn_hidden_feats : list of int
+        rgcn_hidden_feats[i] gives the number of output atom features
+        in the i+1-th HRGCN layer
+    n_tasks : int
+        Number of prediction tasks
+    len_descriptors : int
+        length of descriptors
+    return_weight : bool
+        Wether to return weight
+    classifier_hidden_feats : int
+        Number of molecular graph features in hidden layers of the MLP Classifier
+    is_descriptor: bool
+        Wether to use descriptor
+    loop : bool
+        Wether to use self loop
+    gnn_drop_rate : float
+        The probability for dropout of HRGCN layer. Default to be 0.5
+    dropout : float
+        The probability for dropout of MLP layer. Default to be 0.
+    """
+
+    def __init__(
+        self,
+        ffn_hidden_feats,
+        rgcn_node_feats,
+        rgcn_hidden_feats,
+        rgcn_drop_out=0.25,
+        ffn_dropout=0.25,
+        classification=True,
+        fixed=False,
+    ):
+        super(SeqRGCN, self).__init__(
             gnn_rgcn_out_feats=rgcn_hidden_feats[-1],
             ffn_hidden_feats=ffn_hidden_feats,
             ffn_dropout=ffn_dropout,
@@ -392,16 +574,18 @@ class AME:
 
         return peptides, g_rgcns_list, aa_mask_list, aa_name_list
 
-    def load_model_for_task(self, task_name):
+    def load_model_for_task(self, task_name, verbose: bool = False):
         """Load a model checkpoint based on task name and seed."""
         checkpoint_path = self.checkpoints_dir / f"{task_name}_early_stop.pth"
-        load_checkpoint(self.model, checkpoint_path)
+        load_checkpoint(self.model, checkpoint_path, verbose=verbose)
 
     def predict_for_batch(self, rgcn_bg_list):
         """Predict for a batch of sequences."""
         y_preds = []
         for rgcn_bg in rgcn_bg_list:
             y_pred = predict_one(self.model, dgl.batch(rgcn_bg), self.args["device"])
+            if self.args["classification"]:
+                y_pred = sigmoid(y_pred)
             y_preds.append(y_pred)
         return y_preds
 
@@ -455,13 +639,13 @@ class AME:
         for seed in range(10):
             # For mol task
             task_name = f"{self.args['task']}_mol_{seed}"
-            self.load_model_for_task(task_name)
+            self.load_model_for_task(task_name, verbose=verbose)
             y_preds_mol_temp = self.predict_for_batch(g_rgcns_list)
             y_preds_mol.append([y[0] for y in y_preds_mol_temp])
 
             # For mask task
             task_name = f"{self.args['task']}_{self.args['sub_type']}_{seed}"
-            self.load_model_for_task(task_name)
+            self.load_model_for_task(task_name, verbose=verbose)
             y_preds_mask_temp = self.predict_for_batch(g_rgcns_list)
             y_preds_mask.append(
                 [y[1:] for y in y_preds_mask_temp]

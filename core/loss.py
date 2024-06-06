@@ -1,9 +1,9 @@
-
 import torch
 from torch.nn import Module
 
+
 class QuantileLoss(Module):
-    def __init__(self, q: float=0.25):
+    def __init__(self, q: float = 0.25):
         super(QuantileLoss, self).__init__()
         self.q = q
 

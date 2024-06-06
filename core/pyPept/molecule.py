@@ -26,6 +26,7 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 from rdkit.Chem.Draw import rdDepictor
 
+
 ##########################################################################
 # Functions and classes
 ##########################################################################
@@ -36,7 +37,7 @@ class Molecule:
     """
 
     ############################################################################
-    def __init__(self, sequence=None, depiction='local'):
+    def __init__(self, sequence=None, depiction="local"):
         """
         Initialize a Molecule object, optionally with a Sequence object.
         :param sequence:  input sequence to be converted to a molecule
@@ -51,17 +52,18 @@ class Molecule:
         self.offset = []
         self.bondlist = []
         self.monomers = []
-        if depiction not in ('rdkit', 'local'):
-            raise ValueError(
-                f"Depiction was {depiction}, expected 'rdkit' or 'local'.")
+        if depiction not in ("rdkit", "local"):
+            raise ValueError(f"Depiction was {depiction}, expected 'rdkit' or 'local'.")
         self.depiction = depiction
 
         # Main function, will modify data members defined above.
         self.__from_sequence(sequence)
 
         if not isinstance(self.mol, Chem.rdchem.Mol):
-            raise RuntimeError('pyPept.Molecule initialization failure: ' +
-                'problem initializing rdkit.ROMol')
+            raise RuntimeError(
+                "pyPept.Molecule initialization failure: "
+                + "problem initializing rdkit.ROMol"
+            )
 
     ############################################################################
     def __generate_offset_list(self):
@@ -72,8 +74,8 @@ class Molecule:
         mons = self.monomers
 
         offset = [0]
-        for i,val in enumerate(mons):
-            mol = val['m_romol']
+        for i, val in enumerate(mons):
+            mol = val["m_romol"]
             n_ats = mol.GetNumAtoms()
             offset.append(n_ats + offset[i])
 
@@ -89,8 +91,8 @@ class Molecule:
         mons = self.monomers
 
         mol = [0]
-        for i,val in enumerate(mons):
-            monomer = val['m_romol']
+        for i, val in enumerate(mons):
+            monomer = val["m_romol"]
             if i == 0:
                 mol = monomer
             else:
@@ -123,37 +125,38 @@ class Molecule:
         """
 
         # Define a number of substructures for phi, psi, amide group and sidechains
-        psi_mol = Chem.MolFromSmiles('NCC(=O)N')
-        phi_mol = Chem.MolFromSmiles('C(=O)NCC(=O)')
-        amid_mol = Chem.MolFromSmiles('CC(=O)NC')
-        sc_mol = Chem.MolFromSmarts('[CH][CX4][CH2][#6]')
+        psi_mol = Chem.MolFromSmiles("NCC(=O)N")
+        phi_mol = Chem.MolFromSmiles("C(=O)NCC(=O)")
+        amid_mol = Chem.MolFromSmiles("CC(=O)NC")
+        sc_mol = Chem.MolFromSmarts("[CH][CX4][CH2][#6]")
 
         psi_matches = self.mol.GetSubstructMatches(psi_mol)
         phi_matches = self.mol.GetSubstructMatches(phi_mol)
         amid_matches = list(self.mol.GetSubstructMatches(amid_mol))
         sidechain_matches = list(self.mol.GetSubstructMatches(sc_mol))
-        sidechain_matches1 = list(self.mol.GetSubstructMatches(
-            Chem.MolFromSmarts('N[CX4][CX4][#6]')))
+        sidechain_matches1 = list(
+            self.mol.GetSubstructMatches(Chem.MolFromSmarts("N[CX4][CX4][#6]"))
+        )
         [sidechain_matches.append(sm1) for sm1 in sidechain_matches1]
 
         # Fix for Proline
-        proline = Chem.MolFromSmiles('CC(=O)N1C(C(=O))CCC1')
+        proline = Chem.MolFromSmiles("CC(=O)N1C(C(=O))CCC1")
         proline_matches = list(self.mol.GetSubstructMatches(proline))
         [amid_matches.append(sm1) for sm1 in proline_matches]
 
         # Make sure all open-chain angles are 120 deg
-        any_angle = Chem.MolFromSmarts('[*]~[*x0]~[*]')
+        any_angle = Chem.MolFromSmarts("[*]~[*x0]~[*]")
         all_angles = list(self.mol.GetSubstructMatches(any_angle))
 
         # This is for exocyclic bonds (e.g. phenol OH)
-        any_angle1 = Chem.MolFromSmarts('[*]~[*]~[*x0]')
+        any_angle1 = Chem.MolFromSmarts("[*]~[*]~[*x0]")
         all_angle1 = list(self.mol.GetSubstructMatches(any_angle1))
 
         [all_angles.append(sm1) for sm1 in all_angle1]
 
         # Search for atoms that have 4 connection points, then remove these
         #   from the all_angles list
-        bond4 = Chem.MolFromSmarts('[*D4]')
+        bond4 = Chem.MolFromSmarts("[*D4]")
         bond4 = list(self.mol.GetSubstructMatches(bond4))
         new_angles = []
         for b4 in bond4:
@@ -179,36 +182,37 @@ class Molecule:
             for pm in psi_matches:
                 psi = [pm[0], pm[1], pm[2], pm[4]]
                 try:
-                    Chem.rdMolTransforms.SetDihedralDeg(conf, *psi, 180.)
+                    Chem.rdMolTransforms.SetDihedralDeg(conf, *psi, 180.0)
                 except:
-                    count_error+=1
+                    count_error += 1
 
             for pm in phi_matches:
                 phi = [pm[0], pm[2], pm[3], pm[4]]
                 try:
-                    Chem.rdMolTransforms.SetDihedralDeg(conf, *phi, 180.)
+                    Chem.rdMolTransforms.SetDihedralDeg(conf, *phi, 180.0)
                 except:
-                    count_error+=1
+                    count_error += 1
 
             for pm in amid_matches:
                 phi = [pm[0], pm[1], pm[3], pm[4]]
                 try:
-                    Chem.rdMolTransforms.SetDihedralDeg(conf, *phi, 180.)
+                    Chem.rdMolTransforms.SetDihedralDeg(conf, *phi, 180.0)
                 except:
-                    count_error+=1
+                    count_error += 1
 
             for pm in sidechain_matches:
                 phi = [pm[0], pm[1], pm[2], pm[3]]
                 try:
-                    Chem.rdMolTransforms.SetDihedralDeg(conf, *phi, 180.)
+                    Chem.rdMolTransforms.SetDihedralDeg(conf, *phi, 180.0)
                 except:
-                    count_error+=1
+                    count_error += 1
 
             for am in all_angles:
                 try:
-                    Chem.rdMolTransforms.SetAngleDeg(conf, *am, 120.)
+                    Chem.rdMolTransforms.SetAngleDeg(conf, *am, 120.0)
                 except:
-                    count_error+=1
+                    count_error += 1
+
     # end of Molecule.__fixDihedrals()
 
     ########################################################################################
@@ -225,7 +229,7 @@ class Molecule:
         if sequence is None:
             return None
         if not sequence.is_valid():
-            warnings.warn('Invalid sequence object given! Returning None.')
+            warnings.warn("Invalid sequence object given! Returning None.")
             return None
 
         self.monomers = sequence.s_monomers
@@ -241,17 +245,17 @@ class Molecule:
         self.__add_bonds_to_mol()
 
         # Step3: remove the Rgroups
-        self.mol = Chem.DeleteSubstructs(self.mol, Chem.MolFromSmarts('[#0]'))
+        self.mol = Chem.DeleteSubstructs(self.mol, Chem.MolFromSmarts("[#0]"))
 
         # Step 4: sanitize and generate 2D coords
         Chem.SanitizeMol(self.mol)
 
         # Compute 2D coordinates
-        if self.depiction == 'rdkit':
+        if self.depiction == "rdkit":
             rdDepictor.SetPreferCoordGen(True)
             rdDepictor.Compute2DCoords(self.mol, clearConfs=True)
 
-        if self.depiction=='local':
+        if self.depiction == "local":
             AllChem.Compute2DCoords(self.mol, clearConfs=True)
             Chem.AssignAtomChiralTagsFromStructure(self.mol)
             self.__fixDihedrals()
@@ -278,10 +282,10 @@ class Molecule:
 
         if out_file is None:
             return mol
-        if out_file == '-':
+        if out_file == "-":
             print(mol)
         else:
-            with open(out_file, 'w', encoding='utf-8') as out_f:
+            with open(out_file, "w", encoding="utf-8") as out_f:
                 out_f.write(mol)
 
     ########################################################################################
@@ -297,23 +301,26 @@ class Molecule:
         :type fmt: string
         """
 
-        if fmt == 'SDF':
+        if fmt == "SDF":
             mol = Chem.MolToMolBlock(self.mol, includeStereo=True)
-        elif fmt == 'PDB':
+        elif fmt == "PDB":
             mol = Chem.MolToPDBBlock(self.mol)
-        elif fmt == 'Smiles':
+        elif fmt == "Smiles":
             mol = Chem.MolToSmiles(self.mol)
-        elif fmt == 'ROMol':
+        elif fmt == "ROMol":
             mol = self.mol
         else:
-            warnings.warn('fmt must be one of ' +
-                '"SDF", "PDB", "Smiles", "ROMol" but was ' +
-                f'{fmt}. Return value will be None.')
+            warnings.warn(
+                "fmt must be one of "
+                + '"SDF", "PDB", "Smiles", "ROMol" but was '
+                + f"{fmt}. Return value will be None."
+            )
             mol = None
 
         return mol
 
     # End of the Molecule class declaration.
+
 
 ############################################################
 # End of molecule.py

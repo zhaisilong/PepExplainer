@@ -1,6 +1,7 @@
 from rdkit import Chem
 from rdkit.Chem import rdchem
 
+
 def cyclize_peptide(peptide: rdchem.Mol) -> rdchem.Mol:
     """线肽环化
     Args:
