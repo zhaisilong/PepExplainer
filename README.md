@@ -96,20 +96,22 @@ bash run_mask_thrombin.sh
 
 ## Citation
 
-See [paper]() and the citation:
+See [paper](https://www.sciencedirect.com/science/article/pii/S0223523424005087) and the citation:
 
 ```txt
-@article{,
-  doi = {},
-  url = {},
-  year = {2024},
-  month = ,
-  publisher = {},
-  volume = {},
-  number = {},
-  pages = {},
-  author = {},
-  title = {},
-  journal = {}
+@article{zhaiPepExplainerExplainableDeep2024,
+  title = {{{PepExplainer}}: {{An}} Explainable Deep Learning Model for Selection-Based Macrocyclic Peptide Bioactivity Prediction and Optimization},
+  author = {Zhai, Silong and Tan, Yahong and Zhu, Cheng and Zhang, Chengyun and Gao, Yan and Mao, Qingyi and Zhang, Youming and Duan, Hongliang and Yin, Yizhen},
+  date = {2024-09-05},
+  journaltitle = {European Journal of Medicinal Chemistry},
+  shortjournal = {European Journal of Medicinal Chemistry},
+  volume = {275},
+  pages = {116628},
+  issn = {0223-5234},
+  doi = {10.1016/j.ejmech.2024.116628},
+  url = {https://www.sciencedirect.com/science/article/pii/S0223523424005087},
+  abstract = {Macrocyclic peptides possess unique features, making them highly promising as a drug modality. However, evaluating their bioactivity through wet lab experiments is generally resource-intensive and time-consuming. Despite advancements in artificial intelligence (AI) for bioactivity prediction, challenges remain due to limited data availability and the interpretability issues in deep learning models, often leading to less-than-ideal predictions. To address these challenges, we developed PepExplainer, an explainable graph neural network based on substructure mask explanation (SME). This model excels at deciphering amino acid substructures, translating macrocyclic peptides into detailed molecular graphs at the atomic level, and efficiently handling non-canonical amino acids and complex macrocyclic peptide structures. PepExplainer's effectiveness is enhanced by utilizing the correlation between peptide enrichment data from selection-based focused library and bioactivity data, and employing transfer learning to improve bioactivity predictions of macrocyclic peptides against IL-17C/IL-17~RE interaction. Additionally, PepExplainer underwent further validation for bioactivity prediction using an additional set of thirteen newly synthesized macrocyclic peptides. Moreover, it enabled the optimization of the IC50 of a macrocyclic peptide, reducing it from 15~nM to 5.6~nM based on the contribution score provided by PepExplainer. This achievement underscores PepExplainer's skill in deciphering complex molecular patterns, highlighting its potential to accelerate the discovery and optimization of macrocyclic peptides.},
+  keywords = {Bioactivity prediction,Graph neural network (GNN),Machine learning (ML),Macrocyclic peptide,Optimization,Structure-activity relationship (SAR)}
 }
+
 ``
